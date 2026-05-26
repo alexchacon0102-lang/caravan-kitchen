@@ -1,18 +1,16 @@
+// ============================================================
+// CARAVAN KITCHEN — HUDController.cs v2.1
+// CORRECCIÓN Unity 6.3 LTS: FindObjectOfType → FindFirstObjectByType
+// ============================================================
 using UnityEngine;
 using UnityEngine.UI;
 using TMPro;
 using System.Collections;
 
 /// <summary>
-/// Caravan Kitchen — HUDController.cs v2.0
-/// HUD completo con:
-/// - Barra de XP + nivel + rango
-/// - Monedas y Fama en tiempo real
-/// - Herramienta activa
-/// - Popups: LevelUp, RankUp, Achievement
-/// - Floating text animado
-/// - Panel de mejora de platillo (enhance)
-/// - Barra de energia de expedicion
+/// HUD completo con barra XP, rango, monedas, herramienta activa,
+/// popups (LevelUp, RankUp, Achievement), floating text y panel Enhance.
+/// Compatible con Unity 6.3 LTS.
 /// </summary>
 public class HUDController : MonoBehaviour
 {
@@ -82,22 +80,20 @@ public class HUDController : MonoBehaviour
         }
     }
 
-    // ─── ACTUALIZAR XP BAR ───────────────────────────────────────────────
+    // ─── XP BAR ──────────────────────────────────────────────────────────
     public void UpdateXPBar(float progress, int level)
     {
-        if (xpBar)    xpBar.value   = progress;
+        if (xpBar)     xpBar.value    = progress;
         if (levelText) levelText.text = $"Nv {level}";
     }
 
-    // ─── ACTUALIZAR MONEDAS ───────────────────────────────────────────────
-    public void UpdateCoins(int coins) { if (coinsText) coinsText.text = $"🪙 {coins}"; }
-    public void UpdateFama(int fama)   { if (famaText)  famaText.text  = $"⭐ {fama}"; }
-    public void UpdateEnergy(int cur, int max) { if (energyText) energyText.text = $"⚡ {cur}/{max}"; }
-
-    // ─── HERRAMIENTA ───────────────────────────────────────────────────────
+    // ─── MONEDAS ─────────────────────────────────────────────────────────
+    public void UpdateCoins(int coins)             { if (coinsText)  coinsText.text  = $"🪙 {coins}"; }
+    public void UpdateFama(int fama)               { if (famaText)   famaText.text   = $"⭐ {fama}"; }
+    public void UpdateEnergy(int cur, int max)     { if (energyText) energyText.text = $"⚡ {cur}/{max}"; }
     public void UpdateToolDisplay(string toolName) { if (toolNameText) toolNameText.text = toolName; }
 
-    // ─── POPUP LEVEL UP ─────────────────────────────────────────────────
+    // ─── POPUP LEVEL UP ──────────────────────────────────────────────────
     public void ShowLevelUpPopup(int newLevel)
     {
         if (levelUpPopup == null) return;
@@ -107,7 +103,7 @@ public class HUDController : MonoBehaviour
         StartCoroutine(HideAfter(levelUpPopup, 2.5f));
     }
 
-    // ─── POPUP RANK UP ──────────────────────────────────────────────────
+    // ─── POPUP RANK UP ────────────────────────────────────────────────────
     public void ShowRankUpPopup(XPManager.RankData rankData)
     {
         if (rankUpPopup == null) return;
@@ -119,7 +115,7 @@ public class HUDController : MonoBehaviour
         StartCoroutine(HideAfter(rankUpPopup, 4f));
     }
 
-    // ─── POPUP ACHIEVEMENT ──────────────────────────────────────────────
+    // ─── POPUP ACHIEVEMENT ───────────────────────────────────────────────
     public void ShowAchievementPopup(string emoji, string title)
     {
         if (achievementPopup == null) return;
@@ -130,7 +126,7 @@ public class HUDController : MonoBehaviour
         StartCoroutine(HideAfter(achievementPopup, 3f));
     }
 
-    // ─── FLOATING TEXT ──────────────────────────────────────────────────
+    // ─── FLOATING TEXT ───────────────────────────────────────────────────
     public void ShowFloatingText(string message, Color color)
     {
         if (floatingTextPrefab == null || floatingTextCanvas == null) return;
@@ -146,7 +142,6 @@ public class HUDController : MonoBehaviour
         var tmp  = go.GetComponentInChildren<TextMeshProUGUI>();
         float t = 0f;
         Vector3 startPos = rect.anchoredPosition3D;
-
         while (t < 1.2f)
         {
             t += Time.deltaTime;
@@ -158,25 +153,25 @@ public class HUDController : MonoBehaviour
     }
 
     // ─── PANEL ENHANCE ───────────────────────────────────────────────────
+    /// <summary>
+    /// CORRECCIÓN Unity 6.3: FindObjectOfType obsoleto → FindFirstObjectByType
+    /// </summary>
     public void OpenEnhancePanel(OrderManager.Order order, UIOrderCard card)
     {
         if (enhancePanel == null) return;
         enhancePanel.SetActive(true);
         if (enhancePanelTitle) enhancePanelTitle.text = $"Mejorar: {order.dishName}";
 
-        // Limpiar botones anteriores
         foreach (Transform child in enhanceIngredientListParent) Destroy(child.gameObject);
 
-        // Generar botones por cada enhancer disponible en inventario
-        var inventory = FindObjectOfType<PlayerInventory>();
+        // Unity 6.3 LTS — usar FindFirstObjectByType en lugar de FindObjectOfType (obsoleto)
+        var inventory = FindFirstObjectByType<PlayerInventory>();
         foreach (var enhancerID in DishQualitySystem.EnhancerIngredients)
         {
             if (inventory == null || !inventory.HasIngredient(enhancerID)) continue;
-
             var btn = Instantiate(enhanceIngredientButtonPrefab, enhanceIngredientListParent);
             var txt = btn.GetComponentInChildren<TextMeshProUGUI>();
             if (txt) txt.text = enhancerID.Replace("_", " ");
-
             string id = enhancerID;
             btn.GetComponent<Button>()?.onClick.AddListener(() =>
             {
@@ -193,7 +188,6 @@ public class HUDController : MonoBehaviour
 
     public void CloseEnhancePanel() => enhancePanel?.SetActive(false);
 
-    // ─── UTILIDAD: OCULTAR POPUP TRAS TIEMPO ──────────────────────────────
     private IEnumerator HideAfter(GameObject go, float seconds)
     {
         yield return new WaitForSeconds(seconds);

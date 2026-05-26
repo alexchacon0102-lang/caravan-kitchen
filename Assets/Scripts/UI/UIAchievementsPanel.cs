@@ -1,164 +1,136 @@
+// ============================================================
+// CARAVAN KITCHEN — UIAchievementsPanel.cs
+// Script #30 — Fase 4
+// Panel visual de todos los logros con progreso, categorías
+// y animación de desbloqueo.
+// Compatible con Unity 6.3 LTS
+// ============================================================
+using System.Collections.Generic;
 using UnityEngine;
 using UnityEngine.UI;
 using TMPro;
-using System.Collections.Generic;
 
-/// <summary>
-/// UIAchievementsPanel — Panel visual completo de logros.
-/// Muestra logros desbloqueados, bloqueados, secretos y progreso.
-/// Filtra por categoría y anima la entrada de logros nuevos.
-/// </summary>
 public class UIAchievementsPanel : MonoBehaviour
 {
-    [Header("Panel")]
-    public GameObject panelRoot;
-    public Button closeButton;
-    public TMP_Text titleText;
-    public TMP_Text progressText;         // "14 / 22 logros"
+    public static UIAchievementsPanel Instance { get; private set; }
 
-    [Header("Filtros")]
-    public Button[] categoryButtons;      // Todos, Captura, Cocina, Exploración, Economía, Nimbus, Secretos
-    public Color activeTabColor = new Color(1f, 0.8f, 0.3f);
-    public Color inactiveTabColor = new Color(0.4f, 0.4f, 0.4f);
+    // ─── INSPECTOR ───────────────────────────────────────────────────────
+    [Header("Panel raíz")]
+    [SerializeField] private GameObject panel;
 
-    [Header("Lista")]
-    public Transform contentParent;       // ScrollView Content
-    public GameObject achievementCardPrefab;
-    public GameObject emptyLabel;
+    [Header("Filtro por categoría")]
+    [SerializeField] private Transform  categoryButtonParent;
+    [SerializeField] private GameObject categoryButtonPrefab;
 
-    [Header("Detalle")]
-    public GameObject detailPanel;
-    public Image detailIcon;
-    public TMP_Text detailTitle;
-    public TMP_Text detailDescription;
-    public TMP_Text detailReward;
-    public TMP_Text detailStatus;
+    [Header("Lista de logros")]
+    [SerializeField] private Transform  achievementListParent;
+    [SerializeField] private GameObject achievementCardPrefab;
 
-    private string _activeCategory = "all";
-    private List<GameObject> _cards = new List<GameObject>();
+    [Header("Resumen")]
+    [SerializeField] private TextMeshProUGUI summaryText;   // "12 / 22 logros"
+    [SerializeField] private Slider          progressBar;
 
-    private static readonly string[] Categories = { "all", "capture", "cooking", "exploration", "economy", "companion", "secret" };
+    // ─── ESTADO ──────────────────────────────────────────────────────────
+    private string _activeCategory = "Todos";
+    private List<string> _categories = new List<string> { "Todos", "Cocina", "Captura", "Exploración", "Economía", "Colección", "Social" };
 
-    // ─── INICIO ──────────────────────────────────────────────────────────────
-    void Start()
+    // ─── UNITY ───────────────────────────────────────────────────────────
+    private void Awake()
     {
-        closeButton?.onClick.AddListener(Close);
-        for (int i = 0; i < categoryButtons.Length && i < Categories.Length; i++)
-        {
-            int idx = i;
-            categoryButtons[i].onClick.AddListener(() => SetCategory(Categories[idx]));
-        }
-        panelRoot.SetActive(false);
-        if (AchievementManager.Instance)
-            AchievementManager.Instance.OnAchievementUnlocked += OnNewAchievement;
+        Instance = this;
+        panel?.SetActive(false);
     }
 
-    void OnDestroy()
-    {
-        if (AchievementManager.Instance)
-            AchievementManager.Instance.OnAchievementUnlocked -= OnNewAchievement;
-    }
+    private void Start() => BuildCategoryButtons();
 
-    // ─── ABRIR / CERRAR ──────────────────────────────────────────────────────
+    // ─── ABRIR / CERRAR ───────────────────────────────────────────────────
     public void Open()
     {
-        panelRoot.SetActive(true);
-        SetCategory("all");
-        RefreshProgress();
-        AudioManager.Instance?.PlaySFX("ui_panel_open");
+        panel?.SetActive(true);
+        Refresh();
     }
 
-    public void Close()
+    public void Close() => panel?.SetActive(false);
+
+    public void Toggle()
     {
-        panelRoot.SetActive(false);
-        detailPanel?.SetActive(false);
-        AudioManager.Instance?.PlaySFX("ui_panel_close");
+        if (panel == null) return;
+        if (panel.activeSelf) Close(); else Open();
     }
 
-    // ─── FILTROS ─────────────────────────────────────────────────────────────
-    void SetCategory(string cat)
+    // ─── BOTONES DE CATEGORÍA ─────────────────────────────────────────────
+    private void BuildCategoryButtons()
     {
-        _activeCategory = cat;
-        for (int i = 0; i < categoryButtons.Length && i < Categories.Length; i++)
+        if (categoryButtonParent == null || categoryButtonPrefab == null) return;
+        foreach (var cat in _categories)
         {
-            var img = categoryButtons[i].GetComponent<Image>();
-            if (img) img.color = Categories[i] == cat ? activeTabColor : inactiveTabColor;
+            var btn = Instantiate(categoryButtonPrefab, categoryButtonParent);
+            var txt = btn.GetComponentInChildren<TextMeshProUGUI>();
+            if (txt) txt.text = cat;
+            string c = cat;
+            btn.GetComponent<Button>()?.onClick.AddListener(() => SelectCategory(c));
         }
-        RebuildList();
     }
 
-    // ─── CONSTRUIR LISTA ──────────────────────────────────────────────────────
-    void RebuildList()
+    private void SelectCategory(string category)
     {
-        foreach (var c in _cards) Destroy(c);
-        _cards.Clear();
+        _activeCategory = category;
+        Refresh();
+    }
 
+    // ─── REFRESH ──────────────────────────────────────────────────────────
+    public void Refresh()
+    {
         if (AchievementManager.Instance == null) return;
-        var all = AchievementManager.Instance.GetAllAchievements();
-        int shown = 0;
+
+        // Limpiar lista
+        foreach (Transform child in achievementListParent)
+            Destroy(child.gameObject);
+
+        var all      = AchievementManager.Instance.GetAllAchievements();
+        int unlocked = 0;
 
         foreach (var ach in all)
         {
-            if (_activeCategory != "all" && ach.category != _activeCategory) continue;
-            // Secretos bloqueados: mostrar como "???"
-            bool hidden = ach.isSecret && !ach.isUnlocked;
-            var card = Instantiate(achievementCardPrefab, contentParent);
-            SetupCard(card, ach, hidden);
-            _cards.Add(card);
-            shown++;
+            bool matchCat = _activeCategory == "Todos" || ach.category == _activeCategory;
+            if (!matchCat) continue;
+
+            var card = Instantiate(achievementCardPrefab, achievementListParent);
+
+            // Emoji
+            var emojiTxt = card.transform.Find("Emoji")?.GetComponent<TextMeshProUGUI>();
+            if (emojiTxt) emojiTxt.text = ach.isUnlocked ? ach.emoji : "🔒";
+
+            // Título
+            var titleTxt = card.transform.Find("Title")?.GetComponent<TextMeshProUGUI>();
+            if (titleTxt)
+            {
+                titleTxt.text  = ach.isUnlocked ? ach.title : "???";
+                titleTxt.color = ach.isUnlocked ? Color.white : Color.gray;
+            }
+
+            // Descripción
+            var descTxt = card.transform.Find("Description")?.GetComponent<TextMeshProUGUI>();
+            if (descTxt) descTxt.text = ach.isUnlocked ? ach.description : "Completa más misiones para descubrir este logro.";
+
+            // Barra de progreso del logro
+            var bar = card.transform.Find("ProgressBar")?.GetComponent<Slider>();
+            if (bar)
+            {
+                bar.value = ach.maxProgress > 0 ? (float)ach.currentProgress / ach.maxProgress : (ach.isUnlocked ? 1f : 0f);
+            }
+
+            // Fondo de tarjeta (bloqueado vs desbloqueado)
+            var bg = card.GetComponent<Image>();
+            if (bg) bg.color = ach.isUnlocked
+                ? new Color(0.85f, 0.75f, 0.30f, 0.25f)   // dorado suave
+                : new Color(0.30f, 0.30f, 0.30f, 0.25f);  // gris oscuro
+
+            if (ach.isUnlocked) unlocked++;
         }
 
-        emptyLabel?.SetActive(shown == 0);
-    }
-
-    void SetupCard(GameObject card, AchievementData ach, bool hidden)
-    {
-        var title = card.transform.Find("Title")?.GetComponent<TMP_Text>();
-        var desc  = card.transform.Find("Description")?.GetComponent<TMP_Text>();
-        var icon  = card.transform.Find("Icon")?.GetComponent<Image>();
-        var badge = card.transform.Find("UnlockedBadge");
-        var lockIcon = card.transform.Find("LockIcon");
-
-        if (title) title.text = hidden ? "???" : ach.displayName;
-        if (desc)  desc.text  = hidden ? "Logro secreto — sigue explorando" : ach.description;
-        if (badge) badge.gameObject.SetActive(ach.isUnlocked);
-        if (lockIcon) lockIcon.gameObject.SetActive(!ach.isUnlocked);
-
-        // Color de fondo según rareza
-        var bg = card.GetComponent<Image>();
-        if (bg) bg.color = ach.isUnlocked
-            ? new Color(0.2f, 0.8f, 0.4f, 0.3f)
-            : new Color(0.3f, 0.3f, 0.3f, 0.3f);
-
-        // Click para ver detalle
-        var btn = card.GetComponent<Button>();
-        if (btn && !hidden) btn.onClick.AddListener(() => ShowDetail(ach));
-    }
-
-    // ─── DETALLE ─────────────────────────────────────────────────────────────
-    void ShowDetail(AchievementData ach)
-    {
-        if (detailPanel == null) return;
-        detailPanel.SetActive(true);
-        if (detailTitle) detailTitle.text = ach.displayName;
-        if (detailDescription) detailDescription.text = ach.description;
-        if (detailReward) detailReward.text = $"Recompensa: {ach.rewardDescription}";
-        if (detailStatus) detailStatus.text = ach.isUnlocked ? "✅ Desbloqueado" : "🔒 Bloqueado";
-    }
-
-    // ─── PROGRESO GLOBAL ─────────────────────────────────────────────────────
-    void RefreshProgress()
-    {
-        if (AchievementManager.Instance == null) return;
-        int total = AchievementManager.Instance.TotalAchievements;
-        int done  = AchievementManager.Instance.UnlockedCount;
-        if (progressText) progressText.text = $"{done} / {total} logros";
-        if (titleText) titleText.text = "Logros";
-    }
-
-    // ─── NUEVO LOGRO (callback) ──────────────────────────────────────────────
-    void OnNewAchievement(AchievementData ach)
-    {
-        if (panelRoot.activeSelf) { RebuildList(); RefreshProgress(); }
+        // Resumen
+        if (summaryText) summaryText.text = $"{unlocked} / {all.Count} logros desbloqueados";
+        if (progressBar) progressBar.value = all.Count > 0 ? (float)unlocked / all.Count : 0f;
     }
 }

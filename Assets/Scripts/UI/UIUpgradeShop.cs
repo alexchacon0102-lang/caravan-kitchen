@@ -1,199 +1,119 @@
+// ============================================================
+// CARAVAN KITCHEN — UIUpgradeShop.cs
+// Script #31 — Fase 4
+// Tienda visual de mejoras de la caravana.
+// Muestra tarjetas con nombre, descripción, costo y estado.
+// Compatible con Unity 6.3 LTS
+// ============================================================
 using UnityEngine;
 using UnityEngine.UI;
 using TMPro;
-using System.Collections.Generic;
 
-/// <summary>
-/// UIUpgradeShop — Tienda visual de mejoras de caravana.
-/// Muestra las 10 mejoras con costo, estado, efecto y botón de compra.
-/// Conectada a CaravanUpgradeManager y CurrencyManager.
-/// </summary>
 public class UIUpgradeShop : MonoBehaviour
 {
-    [Header("Panel")]
-    public GameObject panelRoot;
-    public Button closeButton;
-    public TMP_Text goldText;
-    public TMP_Text fameText;
+    public static UIUpgradeShop Instance { get; private set; }
 
-    [Header("Categorías")]
-    public Button[] categoryButtons;
-    public Color activeTabColor  = new Color(1f, 0.8f, 0.3f);
-    public Color inactiveTabColor = new Color(0.35f, 0.35f, 0.35f);
+    // ─── INSPECTOR ───────────────────────────────────────────────────────
+    [Header("Panel raíz")]
+    [SerializeField] private GameObject panel;
 
     [Header("Lista")]
-    public Transform contentParent;
-    public GameObject upgradeCardPrefab;
+    [SerializeField] private Transform  upgradeListParent;
+    [SerializeField] private GameObject upgradeCardPrefab;
 
-    [Header("Detalle seleccionado")]
-    public GameObject detailPanel;
-    public TMP_Text detailName;
-    public TMP_Text detailDescription;
-    public TMP_Text detailEffect;
-    public TMP_Text detailCost;
-    public Button confirmBuyButton;
-    public TMP_Text confirmBuyText;
+    [Header("Info detalle")]
+    [SerializeField] private TextMeshProUGUI detailTitle;
+    [SerializeField] private TextMeshProUGUI detailDesc;
+    [SerializeField] private TextMeshProUGUI detailCost;
+    [SerializeField] private Button          buyButton;
+    [SerializeField] private TextMeshProUGUI buyButtonText;
 
-    [Header("Feedback")]
-    public TMP_Text feedbackText;
-    public float feedbackDuration = 2f;
+    // ─── ESTADO ──────────────────────────────────────────────────────────
+    private CaravanUpgradeManager.UpgradeData _selectedUpgrade;
 
-    private string _activeCategory = "all";
-    private List<GameObject> _cards = new List<GameObject>();
-    private UpgradeData _selectedUpgrade;
-
-    private static readonly string[] Categories = { "all", "kitchen", "storage", "exploration", "clientele", "decoration" };
-    private static readonly string[] CategoryLabels = { "Todas", "Cocina", "Almacén", "Exploración", "Clientela", "Decor" };
-
-    // ─── UNITY ───────────────────────────────────────────────────────────────
-    void Start()
+    // ─── UNITY ───────────────────────────────────────────────────────────
+    private void Awake()
     {
-        closeButton?.onClick.AddListener(Close);
-        SetupCategoryButtons();
-        panelRoot.SetActive(false);
-        detailPanel?.SetActive(false);
+        Instance = this;
+        panel?.SetActive(false);
     }
 
-    void SetupCategoryButtons()
-    {
-        for (int i = 0; i < categoryButtons.Length && i < Categories.Length; i++)
-        {
-            int idx = i;
-            var label = categoryButtons[i].GetComponentInChildren<TMP_Text>();
-            if (label && idx < CategoryLabels.Length) label.text = CategoryLabels[idx];
-            categoryButtons[i].onClick.AddListener(() => SetCategory(Categories[idx]));
-        }
-    }
-
-    // ─── ABRIR / CERRAR ─────────────────────────────────────────────────────
+    // ─── ABRIR / CERRAR ───────────────────────────────────────────────────
     public void Open()
     {
-        panelRoot.SetActive(true);
-        SetCategory("all");
-        RefreshCurrency();
-        AudioManager.Instance?.PlaySFX("ui_shop_open");
+        panel?.SetActive(true);
+        BuildList();
     }
 
-    public void Close()
-    {
-        panelRoot.SetActive(false);
-        _selectedUpgrade = null;
-        AudioManager.Instance?.PlaySFX("ui_panel_close");
-    }
+    public void Close()   => panel?.SetActive(false);
+    public void Toggle()  { if (panel == null) return; if (panel.activeSelf) Close(); else Open(); }
 
-    void RefreshCurrency()
+    // ─── CONSTRUIR LISTA ──────────────────────────────────────────────────
+    private void BuildList()
     {
-        if (CurrencyManager.Instance == null) return;
-        if (goldText) goldText.text = $"🪙 {CurrencyManager.Instance.Coins}";
-        if (fameText)  fameText.text  = $"⭐ {CurrencyManager.Instance.Fame}";
-    }
-
-    // ─── CATEGORÍAS ──────────────────────────────────────────────────────────
-    void SetCategory(string cat)
-    {
-        _activeCategory = cat;
-        for (int i = 0; i < categoryButtons.Length && i < Categories.Length; i++)
-        {
-            var img = categoryButtons[i].GetComponent<Image>();
-            if (img) img.color = Categories[i] == cat ? activeTabColor : inactiveTabColor;
-        }
-        RebuildCards();
-    }
-
-    // ─── CARDS ───────────────────────────────────────────────────────────────
-    void RebuildCards()
-    {
-        foreach (var c in _cards) Destroy(c);
-        _cards.Clear();
         if (CaravanUpgradeManager.Instance == null) return;
+        foreach (Transform child in upgradeListParent) Destroy(child.gameObject);
 
-        foreach (var upg in CaravanUpgradeManager.Instance.upgrades)
+        foreach (var upg in CaravanUpgradeManager.Instance.GetAllUpgrades())
         {
-            if (_activeCategory != "all" && upg.category != _activeCategory) continue;
-            var card = Instantiate(upgradeCardPrefab, contentParent);
-            SetupCard(card, upg);
-            _cards.Add(card);
+            var card = Instantiate(upgradeCardPrefab, upgradeListParent);
+
+            var nameT = card.transform.Find("Name")?.GetComponent<TextMeshProUGUI>();
+            if (nameT) nameT.text = upg.upgradeName;
+
+            var levelT = card.transform.Find("Level")?.GetComponent<TextMeshProUGUI>();
+            if (levelT) levelT.text = upg.isPurchased ? "✅ Comprada" : $"🪙 {upg.costCoins} | ⭐ {upg.costFama}";
+
+            var icon = card.transform.Find("Icon")?.GetComponent<Image>();
+            if (icon && upg.icon != null) icon.sprite = upg.icon;
+
+            // Fondo por estado
+            var bg = card.GetComponent<Image>();
+            if (bg) bg.color = upg.isPurchased
+                ? new Color(0.30f, 0.75f, 0.40f, 0.25f)   // verde
+                : new Color(0.85f, 0.75f, 0.30f, 0.15f);  // amarillo
+
+            var btn = card.GetComponent<Button>();
+            var captured = upg;
+            btn?.onClick.AddListener(() => SelectUpgrade(captured));
         }
     }
 
-    void SetupCard(GameObject card, UpgradeData upg)
-    {
-        card.transform.Find("Name")?.GetComponent<TMP_Text>()?.SetText(upg.displayName);
-        card.transform.Find("Level")?.GetComponent<TMP_Text>()?.SetText($"Nv {upg.currentLevel}/{upg.maxLevel}");
-        card.transform.Find("Effect")?.GetComponent<TMP_Text>()?.SetText(upg.GetCurrentEffectDescription());
-
-        // Barra de progreso de nivel
-        var bar = card.transform.Find("LevelBar")?.GetComponent<Slider>();
-        if (bar) bar.value = upg.maxLevel > 0 ? (float)upg.currentLevel / upg.maxLevel : 0;
-
-        // Estado
-        bool maxed    = upg.currentLevel >= upg.maxLevel;
-        bool canAfford = CurrencyManager.Instance != null &&
-                         CurrencyManager.Instance.Coins >= upg.GetNextCost();
-
-        var costText = card.transform.Find("Cost")?.GetComponent<TMP_Text>();
-        if (costText) costText.text = maxed ? "✅ Máximo" : $"🪙 {upg.GetNextCost()}";
-
-        var bg = card.GetComponent<Image>();
-        if (bg) bg.color = maxed
-            ? new Color(0.3f, 0.7f, 0.3f, 0.4f)
-            : canAfford
-                ? new Color(0.9f, 0.8f, 0.4f, 0.3f)
-                : new Color(0.5f, 0.5f, 0.5f, 0.3f);
-
-        var btn = card.GetComponentInChildren<Button>();
-        if (btn)
-        {
-            btn.interactable = !maxed && canAfford;
-            btn.onClick.AddListener(() => SelectUpgrade(upg));
-        }
-    }
-
-    // ─── SELECCIÓN Y COMPRA ─────────────────────────────────────────────────
-    void SelectUpgrade(UpgradeData upg)
+    // ─── SELECCIONAR MEJORA ───────────────────────────────────────────────
+    private void SelectUpgrade(CaravanUpgradeManager.UpgradeData upg)
     {
         _selectedUpgrade = upg;
-        if (detailPanel) detailPanel.SetActive(true);
-        if (detailName) detailName.text = upg.displayName;
-        if (detailDescription) detailDescription.text = upg.description;
-        if (detailEffect) detailEffect.text = $"Efecto siguiente: {upg.GetNextEffectDescription()}";
-        if (detailCost) detailCost.text = $"Costo: {upg.GetNextCost()} monedas";
+        if (detailTitle) detailTitle.text = upg.upgradeName;
+        if (detailDesc)  detailDesc.text  = upg.description;
+        if (detailCost)  detailCost.text  = upg.isPurchased
+            ? "Ya comprada"
+            : $"Costo: 🪙 {upg.costCoins}  ⭐ {upg.costFama}";
 
-        bool maxed = upg.currentLevel >= upg.maxLevel;
-        if (confirmBuyButton)
+        if (buyButton)
         {
-            confirmBuyButton.gameObject.SetActive(!maxed);
-            confirmBuyButton.onClick.RemoveAllListeners();
-            confirmBuyButton.onClick.AddListener(ConfirmPurchase);
+            buyButton.interactable = !upg.isPurchased;
+            if (buyButtonText) buyButtonText.text = upg.isPurchased ? "Comprada" : "Comprar mejora";
+            buyButton.onClick.RemoveAllListeners();
+            buyButton.onClick.AddListener(BuySelected);
         }
-        if (confirmBuyText) confirmBuyText.text = maxed ? "Máximo" : $"Mejorar (🪙 {upg.GetNextCost()})";
-        AudioManager.Instance?.PlaySFX("ui_select");
     }
 
-    void ConfirmPurchase()
+    // ─── COMPRAR ──────────────────────────────────────────────────────────
+    private void BuySelected()
     {
         if (_selectedUpgrade == null) return;
-        bool success = CaravanUpgradeManager.Instance?.TryUpgrade(_selectedUpgrade.upgradeId) ?? false;
+        bool success = CaravanUpgradeManager.Instance.TryPurchaseUpgrade(_selectedUpgrade.upgradeID);
         if (success)
         {
-            ShowFeedback($"⬆️ {_selectedUpgrade.displayName} mejorada!", Color.green);
-            RebuildCards();
-            RefreshCurrency();
+            FindFirstObjectByType<HUDController>()
+                ?.ShowFloatingText($"✅ {_selectedUpgrade.upgradeName}", Color.green);
+            BuildList();
             SelectUpgrade(_selectedUpgrade); // refrescar detalle
         }
-        else ShowFeedback("Monedas insuficientes", Color.red);
+        else
+        {
+            FindFirstObjectByType<HUDController>()
+                ?.ShowFloatingText("❌ Recursos insuficientes", Color.red);
+        }
     }
-
-    // ─── FEEDBACK ────────────────────────────────────────────────────────────
-    void ShowFeedback(string msg, Color color)
-    {
-        if (!feedbackText) return;
-        feedbackText.text = msg;
-        feedbackText.color = color;
-        feedbackText.gameObject.SetActive(true);
-        CancelInvoke(nameof(HideFeedback));
-        Invoke(nameof(HideFeedback), feedbackDuration);
-    }
-
-    void HideFeedback() { if (feedbackText) feedbackText.gameObject.SetActive(false); }
 }

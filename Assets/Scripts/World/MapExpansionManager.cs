@@ -1,220 +1,142 @@
-using UnityEngine;
-using System;
+// ============================================================
+// CARAVAN KITCHEN — MapExpansionManager.cs
+// Script #27 — Fase 4
+// Gestión de regiones desbloqueables del mundo de Aetherea.
+// Controla estado de zonas, costo de desbloqueo y eventos
+// de primera visita.
+// Compatible con Unity 6.3 LTS
+// ============================================================
 using System.Collections.Generic;
+using UnityEngine;
+using UnityEngine.Events;
 
-/// <summary>
-/// MapExpansionManager — Controla el desbloqueo de regiones del mundo.
-/// Cada región tiene requisitos de monedas, fama, nivel y zonas previas.
-/// </summary>
-[System.Serializable]
-public class RegionData
+namespace CaravanKitchen.World
 {
-    public string regionId;
-    public string displayName;
-    [TextArea] public string description;
-    public int requiredLevel;
-    public int requiredFame;
-    public int unlockCost;          // Monedas de Sabor
-    public string[] prerequisiteRegionIds;
-    public bool isUnlocked;
-    public bool isDiscovered;       // Visto pero no desbloqueado
-    public int difficulty;          // 1-5
-    public string[] exclusiveCreatures;
-    public string[] exclusiveRecipes;
-    public DayNightRequirement timeRestriction;
-
-    public enum DayNightRequirement { Any, DayOnly, NightOnly }
-}
-
-public class MapExpansionManager : MonoBehaviour
-{
-    public static MapExpansionManager Instance { get; private set; }
-
-    [Header("Regiones del mundo")]
-    public List<RegionData> regions = new List<RegionData>();
-
-    [Header("Eventos")]
-    public event Action<RegionData> OnRegionUnlocked;
-    public event Action<RegionData> OnRegionDiscovered;
-
-    // ─── DATOS DE REGIONES ───────────────────────────────────────────────────
-    void Awake()
+    public class MapExpansionManager : MonoBehaviour
     {
-        if (Instance != null && Instance != this) { Destroy(gameObject); return; }
-        Instance = this;
-        InitializeRegions();
-        LoadProgress();
-    }
+        public static MapExpansionManager Instance { get; private set; }
 
-    void InitializeRegions()
-    {
-        regions = new List<RegionData>
+        // ─── MODELO DE REGIÓN ────────────────────────────────────────────
+        [System.Serializable]
+        public class RegionData
         {
-            new RegionData
+            public string  regionID;           // ID interno ej: "pradera_bruma"
+            public string  displayName;        // Nombre mostrado en UI
+            public string  description;        // Descripción breve
+            public int     unlockCostCoins;    // Costo en Monedas de Sabor
+            public int     unlockCostFama;     // Costo en Fama Culinaria
+            public int     requiredPlayerLevel;// Nivel mínimo del jugador
+            public string  prerequisiteRegion; // RegionID que debe estar desbloqueada primero ("" = ninguna)
+            public bool    isUnlocked;         // Se serializa para guardado
+            public bool    hasBeenVisited;     // Primera visita
+            public Sprite  mapIcon;            // Ícono en el mapa
+            public Color   regionColor;        // Color del marcador de mapa
+            [TextArea] public string firstVisitDialog; // Frase de Nimbus al visitar por primera vez
+        }
+
+        // ─── INSPECTOR ───────────────────────────────────────────────────
+        [Header("Regiones del Mundo")]
+        [SerializeField] private List<RegionData> regions = new List<RegionData>();
+
+        [Header("Eventos")]
+        public UnityEvent<RegionData> onRegionUnlocked;
+        public UnityEvent<RegionData> onRegionFirstVisit;
+
+        // ─── RUNTIME ─────────────────────────────────────────────────────
+        private Dictionary<string, RegionData> _regionMap;
+
+        // ─── INIT ─────────────────────────────────────────────────────────
+        private void Awake()
+        {
+            Instance = this;
+            _regionMap = new Dictionary<string, RegionData>();
+            foreach (var r in regions)
+                _regionMap[r.regionID] = r;
+
+            // La primera región siempre desbloqueada
+            if (regions.Count > 0)
+                regions[0].isUnlocked = true;
+        }
+
+        // ─── DESBLOQUEO ───────────────────────────────────────────────────
+        /// <summary>Intenta desbloquear una región. Devuelve true si tuvo éxito.</summary>
+        public bool TryUnlockRegion(string regionID)
+        {
+            if (!_regionMap.TryGetValue(regionID, out var region))
             {
-                regionId = "pradera_bruma", displayName = "Pradera de Bruma",
-                description = "El primer paso fuera de Isla Umbral. Niebla suave, criaturas tranquilas.",
-                requiredLevel = 1, requiredFame = 0, unlockCost = 0,
-                prerequisiteRegionIds = new string[0],
-                isUnlocked = true, isDiscovered = true, difficulty = 1,
-                exclusiveCreatures = new[]{ "puffshroom", "mielin", "caracol_canela" },
-                exclusiveRecipes   = new[]{ "sopa_brumosa", "te_de_miel", "tostada_basica" }
-            },
-            new RegionData
-            {
-                regionId = "bosque_vapor", displayName = "Bosque de Vapor Dulce",
-                description = "Árboles carmesí que sudan néctar. Insectos musicales y especias ardientes.",
-                requiredLevel = 4, requiredFame = 100, unlockCost = 500,
-                prerequisiteRegionIds = new[]{ "pradera_bruma" },
-                isUnlocked = false, isDiscovered = false, difficulty = 2,
-                exclusiveCreatures = new[]{ "abejarin", "mariposa_miel", "lagartico_carmesi" },
-                exclusiveRecipes   = new[]{ "néctar_tibio", "infusion_carmesi", "jalea_de_abejas" }
-            },
-            new RegionData
-            {
-                regionId = "arrecife_nubes", displayName = "Arrecife de Nubes",
-                description = "Coral blanco flotante. Los peces nadan entre nubes como si el cielo fuera mar.",
-                requiredLevel = 8, requiredFame = 300, unlockCost = 1200,
-                prerequisiteRegionIds = new[]{ "bosque_vapor" },
-                isUnlocked = false, isDiscovered = false, difficulty = 3,
-                exclusiveCreatures = new[]{ "nubipez", "esponjacoral", "calamar_celeste" },
-                exclusiveRecipes   = new[]{ "ceviche_de_nube", "sopa_celeste", "sal_de_nube_curada" },
-                timeRestriction = RegionData.DayNightRequirement.DayOnly
-            },
-            new RegionData
-            {
-                regionId = "barranco_caldero", displayName = "Barranco del Caldero",
-                description = "Roca volcánica y caldos minerales. Caliente. El aroma es imposible de describir.",
-                requiredLevel = 14, requiredFame = 700, unlockCost = 2500,
-                prerequisiteRegionIds = new[]{ "arrecife_nubes" },
-                isUnlocked = false, isDiscovered = false, difficulty = 4,
-                exclusiveCreatures = new[]{ "salamandra_azafran", "escorpion_pimienta", "larva_cobre" },
-                exclusiveRecipes   = new[]{ "guiso_volcanico", "pan_de_roca", "esencia_mineral" }
-            },
-            new RegionData
-            {
-                regionId = "mercado_suspendido", displayName = "Mercado Suspendido",
-                description = "Ciudad flotante sobre redes. Comerciantes de todas las regiones. Concursos culinarios.",
-                requiredLevel = 10, requiredFame = 800, unlockCost = 0,
-                prerequisiteRegionIds = new[]{ "bosque_vapor" },
-                isUnlocked = false, isDiscovered = false, difficulty = 1,
-                exclusiveCreatures = new string[0],
-                exclusiveRecipes   = new[]{ "receta_legendaria_mercado" }
-            },
-            new RegionData
-            {
-                regionId = "jungla_canela", displayName = "Jungla de Canela Viva",
-                description = "Lluvia de vainilla. Árboles que huelen a especias. Flora que canta.",
-                requiredLevel = 18, requiredFame = 1200, unlockCost = 4000,
-                prerequisiteRegionIds = new[]{ "barranco_caldero", "mercado_suspendido" },
-                isUnlocked = false, isDiscovered = false, difficulty = 4,
-                exclusiveCreatures = new[]{ "serpiente_canela", "tucan_cardamomo", "rana_vainilla" },
-                exclusiveRecipes   = new[]{ "curry_de_jungla", "pastel_de_canela_viva", "extracto_aromatico" }
-            },
-            new RegionData
-            {
-                regionId = "mareas_eternas", displayName = "Las Mareas Eternas",
-                description = "El mar sube y baja cada 10 minutos revelando zonas únicas. Criaturas abisales.",
-                requiredLevel = 24, requiredFame = 2000, unlockCost = 6000,
-                prerequisiteRegionIds = new[]{ "jungla_canela" },
-                isUnlocked = false, isDiscovered = false, difficulty = 5,
-                exclusiveCreatures = new[]{ "pulpo_tormenta", "medusa_luz", "cangrejo_runa" },
-                exclusiveRecipes   = new[]{ "sopa_abisal", "perla_de_caldo", "marinado_de_marea" },
-                timeRestriction = RegionData.DayNightRequirement.NightOnly
-            },
-            new RegionData
-            {
-                regionId = "cumbre_velo", displayName = "Cumbre del Gran Velo",
-                description = "El origen de todo. La receta maestra está aquí. La bruma puede terminar.",
-                requiredLevel = 30, requiredFame = 5000, unlockCost = 0,
-                prerequisiteRegionIds = new[]{ "mareas_eternas" },
-                isUnlocked = false, isDiscovered = false, difficulty = 5,
-                exclusiveCreatures = new string[0],
-                exclusiveRecipes   = new[]{ "receta_maestra" }
+                Debug.LogWarning($"[MapExpansion] Región no encontrada: {regionID}");
+                return false;
             }
-        };
-    }
 
-    // ─── LÓGICA DE DESBLOQUEO ────────────────────────────────────────────────
-    public bool CanUnlock(string regionId)
-    {
-        RegionData r = GetRegion(regionId);
-        if (r == null || r.isUnlocked) return false;
+            if (region.isUnlocked) return true;
 
-        int playerLevel = XPManager.Instance ? XPManager.Instance.currentLevel : 1;
-        int playerFame  = CurrencyManager.Instance ? CurrencyManager.Instance.Fame : 0;
-        int playerGold  = CurrencyManager.Instance ? CurrencyManager.Instance.Coins : 0;
+            // Verificar prerequisito
+            if (!string.IsNullOrEmpty(region.prerequisiteRegion))
+            {
+                if (!_regionMap.TryGetValue(region.prerequisiteRegion, out var prereq) || !prereq.isUnlocked)
+                {
+                    Debug.Log($"[MapExpansion] Prerequisito no cumplido: {region.prerequisiteRegion}");
+                    return false;
+                }
+            }
 
-        if (playerLevel < r.requiredLevel) return false;
-        if (playerFame  < r.requiredFame)  return false;
-        if (playerGold  < r.unlockCost)    return false;
+            // Verificar nivel
+            var xpMgr = XPManager.Instance;
+            if (xpMgr != null && xpMgr.CurrentLevel < region.requiredPlayerLevel)
+            {
+                Debug.Log($"[MapExpansion] Nivel insuficiente para {regionID}");
+                return false;
+            }
 
-        foreach (string prereq in r.prerequisiteRegionIds)
-        {
-            RegionData pre = GetRegion(prereq);
-            if (pre == null || !pre.isUnlocked) return false;
+            // Verificar monedas y fama
+            var currency = CurrencyManager.Instance;
+            if (currency == null) return false;
+
+            if (!currency.TrySpend(region.unlockCostCoins, region.unlockCostFama))
+            {
+                Debug.Log($"[MapExpansion] Recursos insuficientes para {regionID}");
+                return false;
+            }
+
+            // Desbloquear
+            region.isUnlocked = true;
+            onRegionUnlocked?.Invoke(region);
+            SaveSystem.Instance?.Save();
+            Debug.Log($"[MapExpansion] ✅ Región desbloqueada: {region.displayName}");
+            return true;
         }
-        return true;
-    }
 
-    public bool TryUnlockRegion(string regionId)
-    {
-        if (!CanUnlock(regionId)) return false;
-        RegionData r = GetRegion(regionId);
-        if (r.unlockCost > 0)
-            CurrencyManager.Instance?.SpendCoins(r.unlockCost);
-        r.isUnlocked = true;
-        r.isDiscovered = true;
-        OnRegionUnlocked?.Invoke(r);
-        NimbusController.Instance?.OnNewZone();
-        SaveProgress();
-        GameManager.Instance?.AchievementManager?.UnlockAchievement("region_" + regionId);
-        return true;
-    }
-
-    public void DiscoverRegion(string regionId)
-    {
-        RegionData r = GetRegion(regionId);
-        if (r != null && !r.isDiscovered)
+        // ─── PRIMERA VISITA ───────────────────────────────────────────────
+        /// <summary>Registra la primera visita a una región y dispara eventos.</summary>
+        public void RegisterVisit(string regionID)
         {
-            r.isDiscovered = true;
-            OnRegionDiscovered?.Invoke(r);
-            SaveProgress();
+            if (!_regionMap.TryGetValue(regionID, out var region)) return;
+            if (region.hasBeenVisited) return;
+
+            region.hasBeenVisited = true;
+            onRegionFirstVisit?.Invoke(region);
+
+            // Nimbus reacciona
+            if (!string.IsNullOrEmpty(region.firstVisitDialog))
+                CaravanKitchen.Companion.NimbusController.Instance?.SayPhrase(region.firstVisitDialog);
+            else
+                CaravanKitchen.Companion.NimbusController.Instance?.ReactToNewZone();
+
+            SaveSystem.Instance?.Save();
         }
-    }
 
-    public RegionData GetRegion(string id) => regions.Find(r => r.regionId == id);
-    public List<RegionData> GetUnlockedRegions() => regions.FindAll(r => r.isUnlocked);
-    public List<RegionData> GetAvailableRegions()
-    {
-        // Disponibles = desbloqueadas + las que cumplen prereqs pero no costo
-        return regions.FindAll(r => r.isUnlocked || HasPrereqsMet(r));
-    }
-
-    bool HasPrereqsMet(RegionData r)
-    {
-        foreach (string p in r.prerequisiteRegionIds)
-        { if (!(GetRegion(p)?.isUnlocked ?? false)) return false; }
-        return true;
-    }
-
-    // ─── PERSISTENCIA ────────────────────────────────────────────────────────
-    void SaveProgress()
-    {
-        for (int i = 0; i < regions.Count; i++)
+        // ─── CONSULTAS ────────────────────────────────────────────────────
+        public RegionData     GetRegion(string id)   => _regionMap.TryGetValue(id, out var r) ? r : null;
+        public List<RegionData> GetAllRegions()       => regions;
+        public List<RegionData> GetUnlockedRegions()  => regions.FindAll(r => r.isUnlocked);
+        public bool IsUnlocked(string id)             => _regionMap.TryGetValue(id, out var r) && r.isUnlocked;
+        public bool CanUnlock(string id)
         {
-            PlayerPrefs.SetInt("Region_" + regions[i].regionId + "_unlocked", regions[i].isUnlocked ? 1 : 0);
-            PlayerPrefs.SetInt("Region_" + regions[i].regionId + "_discovered", regions[i].isDiscovered ? 1 : 0);
-        }
-        PlayerPrefs.Save();
-    }
-
-    void LoadProgress()
-    {
-        foreach (var r in regions)
-        {
-            r.isUnlocked   = PlayerPrefs.GetInt("Region_" + r.regionId + "_unlocked",   r.isUnlocked ? 1 : 0) == 1;
-            r.isDiscovered = PlayerPrefs.GetInt("Region_" + r.regionId + "_discovered", r.isDiscovered ? 1 : 0) == 1;
+            if (!_regionMap.TryGetValue(id, out var r)) return false;
+            if (r.isUnlocked) return false;
+            if (!string.IsNullOrEmpty(r.prerequisiteRegion) && !IsUnlocked(r.prerequisiteRegion)) return false;
+            var xp = XPManager.Instance;
+            return xp == null || xp.CurrentLevel >= r.requiredPlayerLevel;
         }
     }
 }

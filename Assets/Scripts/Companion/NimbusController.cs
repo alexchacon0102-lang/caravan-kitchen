@@ -1,193 +1,233 @@
-using UnityEngine;
-using UnityEngine.Rendering.Universal;
+// ============================================================
+// CARAVAN KITCHEN — NimbusController.cs
+// Script #26 — Fase 4
+// Compañero Nimbus: afinidad, colores reactivos, detección
+// de rareza, comentarios de recetas y diálogos por zona.
+// Compatible con Unity 6.3 LTS
+// ============================================================
 using System.Collections;
-using System.Collections.Generic;
+using UnityEngine;
+using UnityEngine.UI;
+using TMPro;
 
-/// <summary>
-/// NimbusController — Compañero vivo con personalidad, afinidad y reacciones.
-/// Detecta rarezas, comenta recetas, guía al jugador y evoluciona con el tiempo.
-/// </summary>
-public class NimbusController : MonoBehaviour
+namespace CaravanKitchen.Companion
 {
-    public static NimbusController Instance { get; private set; }
-
-    // ─── ESTADO DE AFINIDAD ───────────────────────────────────────────────────
-    [Header("Afinidad")]
-    [Range(0, 100)] public float affinityLevel = 0f;
-    public int affinityTier => affinityLevel < 25 ? 0 : affinityLevel < 50 ? 1 : affinityLevel < 75 ? 2 : 3;
-    // Tier 0 = Desconocido | 1 = Amigable | 2 = Cercano | 3 = Inseparable
-
-    [Header("Reacciones")] 
-    public float reactionCooldown = 3f;
-    private float _lastReactionTime;
-
-    // ─── COMPONENTES ─────────────────────────────────────────────────────────
-    [Header("Visual")]
-    public SpriteRenderer spriteRenderer;
-    public Light2D pointLight;
-    public Animator animator;
-    public Transform floatingTextAnchor;
-
-    [Header("Movimiento")]
-    public Transform playerTransform;
-    public float followDistance = 1.4f;
-    public float followSpeed = 3f;
-    public float bobAmplitude = 0.12f;
-    public float bobFrequency = 1.5f;
-
-    // ─── COLORES POR ESTADO ───────────────────────────────────────────────────
-    private static readonly Color ColorNeutral  = new Color(0.85f, 0.92f, 1f);
-    private static readonly Color ColorCurious  = new Color(0.3f,  0.6f,  1f);
-    private static readonly Color ColorHappy    = new Color(1f,    0.85f, 0.2f);
-    private static readonly Color ColorDanger   = new Color(1f,    0.25f, 0.2f);
-    private static readonly Color ColorMystery  = new Color(0.7f,  0.3f,  1f);
-    private static readonly Color ColorApproval = new Color(0.3f,  1f,    0.5f);
-
-    // ─── FRASES POR CONTEXTO ──────────────────────────────────────────────────
-    private readonly Dictionary<string, string[]> _phrases = new Dictionary<string, string[]>
+    public class NimbusController : MonoBehaviour
     {
-        { "rare_found",   new[]{ "¡Ahí está!", "¡Eso es raro!", "¡No te lo pierdas!" } },
-        { "recipe_new",   new[]{ "¡Receta nueva!", "¡Huele increíble!", "¡Esto es arte!" } },
-        { "recipe_fail",  new[]{ "Hmm... algo faltó", "¿Quizás más calor?", "Prueba otra vez" } },
-        { "level_up",     new[]{ "¡Lo lograste!", "¡Eres increíble!", "¡Sube más!" } },
-        { "night_start",  new[]{ "Se hace de noche...", "Ten cuidado", "Las criaturas cambian" } },
-        { "zone_new",     new[]{ "¡Zona nueva!", "¡Qué lugar tan raro!", "¡Exploremos!" } },
-        { "idle_long",    new[]{ "¿Todo bien?", "¡Vamos a cocinar!", "Tengo hambre... bueno" } },
-        { "affinity_up",  new[]{ "¡Me alegra estar contigo!", "Somos un buen equipo", "No te dejaré solo" } }
-    };
+        public static NimbusController Instance { get; private set; }
 
-    private Vector3 _bobOrigin;
-    private bool _isReacting;
-
-    // ─── UNITY ───────────────────────────────────────────────────────────────
-    void Awake()
-    {
-        if (Instance != null && Instance != this) { Destroy(gameObject); return; }
-        Instance = this;
-    }
-
-    void Start()
-    {
-        _bobOrigin = transform.localPosition;
-        LoadAffinity();
-        SetColor(ColorNeutral);
-    }
-
-    void Update()
-    {
-        FollowPlayer();
-        Bob();
-        DetectNearbyRarities();
-    }
-
-    // ─── MOVIMIENTO ───────────────────────────────────────────────────────────
-    void FollowPlayer()
-    {
-        if (playerTransform == null) return;
-        Vector3 target = playerTransform.position + Vector3.left * followDistance + Vector3.up * 0.8f;
-        transform.position = Vector3.Lerp(transform.position, target, Time.deltaTime * followSpeed);
-    }
-
-    void Bob()
-    {
-        float y = Mathf.Sin(Time.time * bobFrequency) * bobAmplitude;
-        transform.localPosition = new Vector3(transform.localPosition.x, _bobOrigin.y + y, transform.localPosition.z);
-    }
-
-    // ─── DETECCIÓN DE RAREZA ──────────────────────────────────────────────────
-    void DetectNearbyRarities()
-    {
-        if (Time.time - _lastReactionTime < reactionCooldown) return;
-        Collider2D[] hits = Physics2D.OverlapCircleAll(transform.position, 5f);
-        foreach (var hit in hits)
+        // ─── ESTADOS DE NIMBUS ───────────────────────────────────────────
+        public enum NimbusEmotion
         {
-            CreatureBase c = hit.GetComponent<CreatureBase>();
-            if (c != null && (int)c.rarity >= (int)ItemRarity.Rare)
+            Neutral,    // Blanco-gris — estado base
+            Curious,    // Azul        — detecta algo
+            Happy,      // Amarillo    — hallazgo / receta nueva
+            Excited,    // Naranja     — criatura brillante
+            Alert,      // Rojo        — peligro / rareza alta
+            Mysterious, // Morado      — zona nueva / secreto
+            Approving,  // Verde       — receta cocinada con éxito
+            Tired       // Gris oscuro — energía baja
+        }
+
+        // ─── INSPECTOR ──────────────────────────────────────────────────
+        [Header("Visual")]
+        [SerializeField] private SpriteRenderer bodyRenderer;
+        [SerializeField] private SpriteRenderer glowRenderer;
+        [SerializeField] private float floatAmplitude  = 0.15f;
+        [SerializeField] private float floatSpeed      = 1.8f;
+        [SerializeField] private float colorTransSpeed = 3f;
+
+        [Header("Detección")]
+        [SerializeField] private float rareDetectRadius = 4f;
+        [SerializeField] private LayerMask creatureLayer;
+
+        [Header("UI de diálogo")]
+        [SerializeField] private GameObject  dialogBubble;
+        [SerializeField] private TextMeshProUGUI dialogText;
+        [SerializeField] private float dialogDuration = 3f;
+
+        [Header("Afinidad")]
+        [SerializeField] private int maxAffinity = 100;
+
+        // ─── PALETA DE COLORES ───────────────────────────────────────────
+        private static readonly Color ColorNeutral    = new Color(0.90f, 0.92f, 0.95f);
+        private static readonly Color ColorCurious    = new Color(0.30f, 0.60f, 1.00f);
+        private static readonly Color ColorHappy      = new Color(1.00f, 0.90f, 0.20f);
+        private static readonly Color ColorExcited    = new Color(1.00f, 0.55f, 0.10f);
+        private static readonly Color ColorAlert      = new Color(0.95f, 0.20f, 0.20f);
+        private static readonly Color ColorMysterious = new Color(0.65f, 0.25f, 0.95f);
+        private static readonly Color ColorApproving  = new Color(0.30f, 0.85f, 0.40f);
+        private static readonly Color ColorTired      = new Color(0.45f, 0.45f, 0.50f);
+
+        // ─── ESTADO INTERNO ──────────────────────────────────────────────
+        private NimbusEmotion _currentEmotion = NimbusEmotion.Neutral;
+        private Color         _targetColor;
+        private float         _floatOffset;
+        private int           _affinity = 0;
+        private Vector3       _baseLocalPos;
+        private Coroutine     _dialogCoroutine;
+        private Coroutine     _detectCoroutine;
+
+        // ─── FRASES POR EMOCIÓN ──────────────────────────────────────────
+        private static readonly string[] PhrasesHappy      = { "¡Mira eso!", "¡Qué descubrimiento!", "¡Lo sabía!", "¡Brillante!" };
+        private static readonly string[] PhrasesExcited    = { "¡¡CRIATURA BRILLANTE!!", "¡Es rarísima!", "¡No la dejes escapar!" };
+        private static readonly string[] PhrasesApproving  = { "Mmm... ¡delicioso!", "¡Excelente receta!", "Huele increíble.", "¡El mejor platillo!" };
+        private static readonly string[] PhrasesCurious    = { "Algo hay por aquí...", "Siento una presencia.", "Espera... ¿lo notas?", "Olé, hay algo oculto." };
+        private static readonly string[] PhrasesTired      = { "Descansemos un poco...", "Casi sin energía.", "Volvamos a la caravana." };
+        private static readonly string[] PhrasesMysterious = { "Este lugar es antiguo.", "Algo mágico aquí...", "Kael, presta atención.", "Jamás vi algo así." };
+
+        // ─── UNITY ───────────────────────────────────────────────────────
+        private void Awake()
+        {
+            Instance = this;
+            _targetColor  = ColorNeutral;
+            _baseLocalPos = transform.localPosition;
+            if (dialogBubble) dialogBubble.SetActive(false);
+        }
+
+        private void Start()
+        {
+            _detectCoroutine = StartCoroutine(DetectionLoop());
+        }
+
+        private void Update()
+        {
+            FloatAnimation();
+            LerpColor();
+        }
+
+        // ─── FLOTACIÓN ───────────────────────────────────────────────────
+        private void FloatAnimation()
+        {
+            _floatOffset += Time.deltaTime * floatSpeed;
+            float y = Mathf.Sin(_floatOffset) * floatAmplitude;
+            transform.localPosition = _baseLocalPos + new Vector3(0f, y, 0f);
+        }
+
+        // ─── INTERPOLACIÓN DE COLOR ──────────────────────────────────────
+        private void LerpColor()
+        {
+            if (bodyRenderer != null)
+                bodyRenderer.color = Color.Lerp(bodyRenderer.color, _targetColor, Time.deltaTime * colorTransSpeed);
+            if (glowRenderer != null)
+                glowRenderer.color = Color.Lerp(glowRenderer.color,
+                    new Color(_targetColor.r, _targetColor.g, _targetColor.b, 0.35f),
+                    Time.deltaTime * colorTransSpeed);
+        }
+
+        // ─── LOOP DE DETECCIÓN ───────────────────────────────────────────
+        private IEnumerator DetectionLoop()
+        {
+            while (true)
             {
-                React("rare_found", ColorCurious);
-                return;
+                yield return new WaitForSeconds(0.5f);
+                DetectNearbyRarity();
             }
         }
-    }
 
-    // ─── REACCIONES PÚBLICAS ──────────────────────────────────────────────────
-    public void OnRecipeSuccess()   => React("recipe_new",  ColorApproval);
-    public void OnRecipeFail()      => React("recipe_fail", ColorDanger);
-    public void OnLevelUp()         => React("level_up",    ColorHappy);
-    public void OnNightStart()      => React("night_start", ColorMystery);
-    public void OnNewZone()         => React("zone_new",    ColorCurious);
-
-    public void React(string context, Color lightColor)
-    {
-        if (_isReacting) return;
-        _lastReactionTime = Time.time;
-        StartCoroutine(DoReact(context, lightColor));
-        GainAffinity(0.5f);
-    }
-
-    IEnumerator DoReact(string context, Color lightColor)
-    {
-        _isReacting = true;
-        SetColor(lightColor);
-        ShowPhrase(context);
-        if (animator) animator.SetTrigger("React");
-        yield return new WaitForSeconds(2f);
-        SetColor(ColorNeutral);
-        _isReacting = false;
-    }
-
-    // ─── COLOR DE LUZ ─────────────────────────────────────────────────────────
-    void SetColor(Color c)
-    {
-        if (pointLight) { pointLight.color = c; pointLight.intensity = 1.2f; }
-        if (spriteRenderer) spriteRenderer.color = c;
-    }
-
-    // ─── FRASE FLOTANTE ───────────────────────────────────────────────────────
-    void ShowPhrase(string context)
-    {
-        if (!_phrases.ContainsKey(context)) return;
-        string[] options = _phrases[context];
-        string phrase = options[Random.Range(0, options.Length)];
-        // Instanciar FloatingText si existe en el pool global
-        if (FloatingTextPool.Instance != null)
-            FloatingTextPool.Instance.Spawn(phrase, floatingTextAnchor ? floatingTextAnchor.position : transform.position, Color.white);
-    }
-
-    // ─── AFINIDAD ─────────────────────────────────────────────────────────────
-    public void GainAffinity(float amount)
-    {
-        float prev = affinityLevel;
-        affinityLevel = Mathf.Clamp(affinityLevel + amount, 0, 100);
-        if ((int)(prev / 25) < affinityTier)
+        private void DetectNearbyRarity()
         {
-            React("affinity_up", ColorHappy);
-            GameManager.Instance?.AchievementManager?.UnlockAchievement("nimbus_bond_" + affinityTier);
+            Collider2D[] hits = Physics2D.OverlapCircleAll(
+                transform.position, rareDetectRadius, creatureLayer);
+
+            float highestRarity = 0f;
+            foreach (var h in hits)
+            {
+                var cb = h.GetComponent<CaravanKitchen.Creatures.CreatureBase>();
+                if (cb != null) highestRarity = Mathf.Max(highestRarity, (float)cb.rarity);
+            }
+
+            if      (highestRarity >= 4f) SetEmotion(NimbusEmotion.Excited,    true);
+            else if (highestRarity >= 2f) SetEmotion(NimbusEmotion.Curious,    true);
+            else if (_currentEmotion == NimbusEmotion.Curious ||
+                     _currentEmotion == NimbusEmotion.Excited)
+                SetEmotion(NimbusEmotion.Neutral, false);
         }
-        SaveAffinity();
-    }
 
-    // ─── PERSISTENCIA ────────────────────────────────────────────────────────
-    void SaveAffinity()  => PlayerPrefs.SetFloat("NimbusAffinity", affinityLevel);
-    void LoadAffinity()  => affinityLevel = PlayerPrefs.GetFloat("NimbusAffinity", 0f);
-
-    // ─── IDLE LARGO ──────────────────────────────────────────────────────────
-    private float _idleTimer;
-    void OnEnable() => InvokeRepeating(nameof(CheckIdle), 60f, 60f);
-    void CheckIdle()
-    {
-        if (!playerTransform) return;
-        if (playerTransform.GetComponent<Rigidbody2D>()?.velocity.magnitude < 0.1f)
+        // ─── API PÚBLICA ─────────────────────────────────────────────────
+        /// <summary>Cambia la emoción de Nimbus. Si showDialog=true muestra frase automática.</summary>
+        public void SetEmotion(NimbusEmotion emotion, bool showDialog = false)
         {
-            _idleTimer += 60f;
-            if (_idleTimer >= 180f) { React("idle_long", ColorHappy); _idleTimer = 0; }
-        }
-        else _idleTimer = 0;
-    }
+            if (_currentEmotion == emotion) return;
+            _currentEmotion = emotion;
 
-    void OnDrawGizmosSelected()
-    {
-        Gizmos.color = Color.cyan;
-        Gizmos.DrawWireSphere(transform.position, 5f);
+            _targetColor = emotion switch
+            {
+                NimbusEmotion.Curious    => ColorCurious,
+                NimbusEmotion.Happy      => ColorHappy,
+                NimbusEmotion.Excited    => ColorExcited,
+                NimbusEmotion.Alert      => ColorAlert,
+                NimbusEmotion.Mysterious => ColorMysterious,
+                NimbusEmotion.Approving  => ColorApproving,
+                NimbusEmotion.Tired      => ColorTired,
+                _                        => ColorNeutral
+            };
+
+            if (showDialog) ShowAutoPhrase(emotion);
+        }
+
+        /// <summary>Muestra una frase personalizada en la burbuja de diálogo.</summary>
+        public void SayPhrase(string phrase)
+        {
+            if (_dialogCoroutine != null) StopCoroutine(_dialogCoroutine);
+            _dialogCoroutine = StartCoroutine(ShowDialog(phrase));
+        }
+
+        /// <summary>Llama esto cuando el jugador cocina una receta nueva.</summary>
+        public void ReactToNewRecipe()    => SetEmotion(NimbusEmotion.Happy,      true);
+
+        /// <summary>Llama esto cuando la energía de viaje es baja.</summary>
+        public void ReactToLowEnergy()    => SetEmotion(NimbusEmotion.Tired,      true);
+
+        /// <summary>Llama esto al entrar a una zona nueva por primera vez.</summary>
+        public void ReactToNewZone()      => SetEmotion(NimbusEmotion.Mysterious, true);
+
+        /// <summary>Llama esto al completar un pedido legendario.</summary>
+        public void ReactToLegendaryDish() => SetEmotion(NimbusEmotion.Approving, true);
+
+        // ─── AFINIDAD ────────────────────────────────────────────────────
+        /// <summary>Suma puntos de afinidad (máx maxAffinity). Desbloquea frases nuevas.</summary>
+        public void AddAffinity(int amount)
+        {
+            _affinity = Mathf.Clamp(_affinity + amount, 0, maxAffinity);
+            if (_affinity >= 50 && _affinity - amount < 50)
+                SayPhrase("¡Ya confío en ti, Kael!");
+            else if (_affinity >= maxAffinity)
+                SayPhrase("Eres el mejor chef que he conocido.");
+        }
+
+        public int  GetAffinity()   => _affinity;
+        public bool IsHighAffinity  => _affinity >= 75;
+
+        // ─── INTERNAS ────────────────────────────────────────────────────
+        private void ShowAutoPhrase(NimbusEmotion emotion)
+        {
+            string[] pool = emotion switch
+            {
+                NimbusEmotion.Happy      => PhrasesHappy,
+                NimbusEmotion.Excited    => PhrasesExcited,
+                NimbusEmotion.Approving  => PhrasesApproving,
+                NimbusEmotion.Curious    => PhrasesCurious,
+                NimbusEmotion.Tired      => PhrasesTired,
+                NimbusEmotion.Mysterious => PhrasesMysterious,
+                _ => null
+            };
+            if (pool != null) SayPhrase(pool[Random.Range(0, pool.Length)]);
+        }
+
+        private IEnumerator ShowDialog(string phrase)
+        {
+            if (dialogBubble == null || dialogText == null) yield break;
+            dialogText.text = phrase;
+            dialogBubble.SetActive(true);
+            yield return new WaitForSeconds(dialogDuration);
+            dialogBubble.SetActive(false);
+        }
+
+        private void OnDrawGizmosSelected()
+        {
+            Gizmos.color = Color.cyan;
+            Gizmos.DrawWireSphere(transform.position, rareDetectRadius);
+        }
     }
 }
