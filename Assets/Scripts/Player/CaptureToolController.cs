@@ -1,163 +1,147 @@
-// ============================================================
-// CARAVAN KITCHEN — CaptureToolController.cs
-// Fase 3 — Script 2 de 8
-// PROGRESO: Player/CaptureToolController.cs ✅
-// SIGUIENTE: World/CaravanUpgradeManager.cs
-// ============================================================
-using System.Collections;
 using UnityEngine;
-using UnityEngine.InputSystem;
-using CaravanKitchen.Creatures;
+using System.Collections;
 
-namespace CaravanKitchen.Player
+/// <summary>
+/// Caravan Kitchen — CaptureToolController.cs
+/// Gestiona las herramientas de captura del jugador:
+/// Red, Cebo, Trampa de Vapor, Campana, Guante Térmico, Jaula de Viento.
+/// Cada herramienta tiene cooldown, durabilidad y nivel de mejora.
+/// </summary>
+public class CaptureToolController : MonoBehaviour
 {
-    public enum ToolType { Net, BaitTrap, Bell, SteamPotion, ThermalGlove }
+    // ─── ENUMS ────────────────────────────────────────────────────────────
+    public enum ToolType { Net, Bait, SteamTrap, Bell, ThermalGlove, WindCage }
 
-    /// <summary>
-    /// Gestiona la herramienta activa del jugador para capturar criaturas.
-    /// El jugador puede cambiar de herramienta según el tipo de criatura.
-    /// Cada herramienta tiene cooldown y animación propia.
-    /// </summary>
-    [RequireComponent(typeof(PlayerController))]
-    public class CaptureToolController : MonoBehaviour
+    [System.Serializable]
+    public class CaptureTool
     {
-        // ── Config de herramientas ─────────────────────────────────
-        [System.Serializable]
-        public class ToolData
+        public ToolType type;
+        public string displayName;
+        public int level;           // 1–3
+        public float cooldown;      // segundos entre usos
+        public int maxDurability;
+        public int currentDurability;
+        public float captureBonus;  // % bonus de captura
+        public bool isUnlocked;
+
+        public bool IsReady => currentDurability > 0;
+        public float EffectiveBonus => captureBonus * (1f + (level - 1) * 0.25f);
+    }
+
+    // ─── INSPECTOR ────────────────────────────────────────────────────────
+    [Header("Herramientas")]
+    public CaptureTool[] tools = new CaptureTool[]
+    {
+        new CaptureTool { type=ToolType.Net,          displayName="Red de Bruma",     level=1, cooldown=2f,  maxDurability=20, currentDurability=20, captureBonus=0.10f, isUnlocked=true  },
+        new CaptureTool { type=ToolType.Bait,         displayName="Frasco de Cebo",   level=1, cooldown=5f,  maxDurability=10, currentDurability=10, captureBonus=0.25f, isUnlocked=true  },
+        new CaptureTool { type=ToolType.SteamTrap,    displayName="Trampa de Vapor",  level=1, cooldown=8f,  maxDurability=8,  currentDurability=8,  captureBonus=0.30f, isUnlocked=false },
+        new CaptureTool { type=ToolType.Bell,         displayName="Campana Sonora",   level=1, cooldown=6f,  maxDurability=15, currentDurability=15, captureBonus=0.20f, isUnlocked=false },
+        new CaptureTool { type=ToolType.ThermalGlove, displayName="Guante Térmico",   level=1, cooldown=3f,  maxDurability=12, currentDurability=12, captureBonus=0.35f, isUnlocked=false },
+        new CaptureTool { type=ToolType.WindCage,     displayName="Jaula de Viento",  level=1, cooldown=10f, maxDurability=6,  currentDurability=6,  captureBonus=0.40f, isUnlocked=false }
+    };
+
+    [Header("Estado")]
+    public ToolType activeTool = ToolType.Net;
+    private float[] cooldownTimers;
+
+    // ─── REFERENCIAS ──────────────────────────────────────────────────────
+    private PlayerInventory inventory;
+    private HUDController hud;
+
+    // ─── INICIALIZACIÓN ────────────────────────────────────────────────────
+    void Awake()
+    {
+        cooldownTimers = new float[tools.Length];
+        inventory = GetComponent<PlayerInventory>();
+        hud = FindObjectOfType<HUDController>();
+    }
+
+    void Update()
+    {
+        for (int i = 0; i < cooldownTimers.Length; i++)
+            if (cooldownTimers[i] > 0f) cooldownTimers[i] -= Time.deltaTime;
+    }
+
+    // ─── SELECCIONAR HERRAMIENTA ───────────────────────────────────────────
+    public void SelectTool(ToolType type)
+    {
+        activeTool = type;
+        hud?.UpdateToolDisplay(type.ToString());
+    }
+
+    // ─── USAR HERRAMIENTA ──────────────────────────────────────────────────
+    public bool UseTool(CreatureBase target)
+    {
+        int idx = (int)activeTool;
+        CaptureTool tool = tools[idx];
+
+        if (!tool.isUnlocked)    { Debug.Log($"[Capture] {tool.displayName} no desbloqueada."); return false; }
+        if (!tool.IsReady)       { Debug.Log($"[Capture] {tool.displayName} sin durabilidad."); return false; }
+        if (cooldownTimers[idx] > 0f) { Debug.Log($"[Capture] Cooldown activo: {cooldownTimers[idx]:0.0}s"); return false; }
+
+        cooldownTimers[idx] = tool.cooldown;
+        tool.currentDurability--;
+
+        float successChance = CalculateCaptureChance(tool, target);
+        bool captured = Random.value <= successChance;
+
+        if (captured)
         {
-            public ToolType   type;
-            public string     displayName;
-            public float      range          = 2f;
-            public float      cooldown       = 1.5f;
-            public CaptureMethod captureMethod;
-            public GameObject throwPrefab;     // proyectil opcional
-            public Sprite     icon;
-            [TextArea] public string tooltip;
+            StartCoroutine(CaptureSequence(target));
+        }
+        else
+        {
+            target.OnCaptureFailed();
+            hud?.ShowFloatingText("¡Escapó!", Color.red);
         }
 
-        [Header("Herramientas disponibles")]
-        [SerializeField] private ToolData[] tools;
+        return captured;
+    }
 
-        [Header("Herramienta inicial")]
-        [SerializeField] private int startToolIndex = 0;
+    // ─── CÁLCULO DE PROBABILIDAD ───────────────────────────────────────────
+    private float CalculateCaptureChance(CaptureTool tool, CreatureBase creature)
+    {
+        float base_ = 0.5f;
+        float toolBonus = tool.EffectiveBonus;
+        float rarityPenalty = creature.rarityPenalty;  // definido en CreatureBase
+        float nimbusBonus = 0f;  // se activa si Nimbus detectó la criatura
 
-        [Header("Visual")]
-        [SerializeField] private SpriteRenderer toolSprite;
-        [SerializeField] private ParticleSystem useEffect;
-        [SerializeField] private Transform      throwOrigin;
+        float total = Mathf.Clamp01(base_ + toolBonus - rarityPenalty + nimbusBonus);
+        return total;
+    }
 
-        // ── Estado ─────────────────────────────────────────────
-        private int      _currentIndex = 0;
-        private bool     _onCooldown   = false;
-        private float    _cooldownTimer = 0f;
-        private ToolData _activeTool;
+    // ─── SECUENCIA DE CAPTURA ──────────────────────────────────────────────
+    private IEnumerator CaptureSequence(CreatureBase creature)
+    {
+        creature.OnCaptured();
+        hud?.ShowFloatingText($"¡{creature.creatureName} capturado!", Color.green);
+        yield return new WaitForSeconds(0.5f);
+        inventory.AddCreature(creature.creatureID, creature.rarity);
+        GameManager.Instance.AddXP(creature.xpReward);
+        AchievementManager.Instance?.CheckCaptureAchievements(creature.creatureID);
+    }
 
-        // ── Eventos ────────────────────────────────────────────
-        public static event System.Action<ToolData, float> OnToolUsed;    // herramienta, cooldown%
-        public static event System.Action<ToolData>        OnToolChanged;
+    // ─── REPARAR HERRAMIENTA ───────────────────────────────────────────────
+    public void RepairTool(ToolType type)
+    {
+        CaptureTool tool = tools[(int)type];
+        tool.currentDurability = tool.maxDurability;
+        Debug.Log($"[Capture] {tool.displayName} reparada.");
+    }
 
-        // ── Init ────────────────────────────────────────────────
-        private void Start()
-        {
-            if (tools == null || tools.Length == 0) return;
-            _currentIndex = Mathf.Clamp(startToolIndex, 0, tools.Length - 1);
-            EquipTool(_currentIndex);
-        }
+    // ─── MEJORAR HERRAMIENTA ───────────────────────────────────────────────
+    public bool UpgradeTool(ToolType type, CurrencyManager currency)
+    {
+        CaptureTool tool = tools[(int)type];
+        if (tool.level >= 3) { Debug.Log("Nivel máximo."); return false; }
 
-        private void Update()
-        {
-            if (_onCooldown)
-            {
-                _cooldownTimer -= Time.deltaTime;
-                OnToolUsed?.Invoke(_activeTool, 1f - (_cooldownTimer / _activeTool.cooldown));
-                if (_cooldownTimer <= 0) _onCooldown = false;
-            }
-        }
+        int cost = tool.level == 1 ? 300 : 800;
+        if (!currency.SpendCoins(cost)) return false;
 
-        // ── Input System callbacks ────────────────────────────────
-        public void OnUseTool(InputAction.CallbackContext ctx)
-        {
-            if (ctx.performed) TryUseTool();
-        }
-
-        public void OnNextTool(InputAction.CallbackContext ctx)
-        {
-            if (ctx.performed) CycleTool(1);
-        }
-
-        public void OnPrevTool(InputAction.CallbackContext ctx)
-        {
-            if (ctx.performed) CycleTool(-1);
-        }
-
-        // ── Usar herramienta ───────────────────────────────────────
-        private void TryUseTool()
-        {
-            if (_onCooldown || _activeTool == null) return;
-
-            // Buscar criatura en rango
-            Collider2D hit = Physics2D.OverlapCircle(
-                transform.position, _activeTool.range,
-                LayerMask.GetMask("Creature"));
-
-            if (hit != null)
-            {
-                var creature = hit.GetComponent<CreatureBase>();
-                if (creature != null)
-                {
-                    bool captured = creature.TryCapture(_activeTool.captureMethod);
-                    if (captured && Core.GameData.Instance != null)
-                        Core.GameData.Instance.totalCreaturesCaught++;
-                }
-            }
-            else
-            {
-                Debug.Log($"[Tool] {_activeTool.displayName} usado (sin criatura en rango)");
-            }
-
-            // Efecto visual
-            if (useEffect != null) useEffect.Play();
-
-            // Lanzar proyectil si tiene
-            if (_activeTool.throwPrefab != null && throwOrigin != null)
-                Instantiate(_activeTool.throwPrefab, throwOrigin.position,
-                            Quaternion.identity);
-
-            // Cooldown
-            _onCooldown    = true;
-            _cooldownTimer = _activeTool.cooldown;
-            OnToolUsed?.Invoke(_activeTool, 0f);
-        }
-
-        // ── Cambiar herramienta ──────────────────────────────────────
-        private void CycleTool(int dir)
-        {
-            if (tools == null || tools.Length == 0) return;
-            _currentIndex = (_currentIndex + dir + tools.Length) % tools.Length;
-            EquipTool(_currentIndex);
-        }
-
-        private void EquipTool(int index)
-        {
-            _activeTool = tools[index];
-            _onCooldown = false;
-            if (toolSprite != null && _activeTool.icon != null)
-                toolSprite.sprite = _activeTool.icon;
-            OnToolChanged?.Invoke(_activeTool);
-            Debug.Log($"[Tool] Equipado: {_activeTool.displayName}");
-        }
-
-        // ── API ──────────────────────────────────────────────────
-        public ToolData ActiveTool     => _activeTool;
-        public bool     IsOnCooldown   => _onCooldown;
-        public float    CooldownPct    => _onCooldown ? _cooldownTimer / _activeTool.cooldown : 0f;
-
-        // ── Gizmos ───────────────────────────────────────────────
-        private void OnDrawGizmosSelected()
-        {
-            if (_activeTool == null) return;
-            Gizmos.color = Color.magenta;
-            Gizmos.DrawWireSphere(transform.position, _activeTool.range);
-        }
+        tool.level++;
+        tool.maxDurability += 5;
+        tool.currentDurability = tool.maxDurability;
+        Debug.Log($"[Capture] {tool.displayName} mejorada a nivel {tool.level}.");
+        return true;
     }
 }

@@ -1,83 +1,64 @@
 using UnityEngine;
 using System.IO;
-using System.Collections.Generic;
+using System;
 
 /// <summary>
-/// SaveSystem — guarda y carga el estado completo del juego en JSON local.
-/// Usar: SaveSystem.Save(data) / SaveSystem.Load()
+/// Caravan Kitchen — SaveSystem.cs
+/// Guarda y carga toda la partida en JSON local.
+/// Incluye: inventario, monedas, fama, XP, rango, logros, upgrades, recetario.
 /// </summary>
 public static class SaveSystem
 {
-    private static readonly string SavePath = Application.persistentDataPath + "/caravan_save.json";
+    private static readonly string SavePath = Application.persistentDataPath + "/save.json";
 
-    public static void Save(SaveData data)
+    // ─── GUARDAR ───────────────────────────────────────────────────────────
+    public static void Save(GameData data)
     {
-        data.lastSaved = System.DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss");
-        string json = JsonUtility.ToJson(data, prettyPrint: true);
-        File.WriteAllText(SavePath, json);
-        Debug.Log($"[SaveSystem] Guardado en: {SavePath}");
+        try
+        {
+            data.lastSaved = DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss");
+            string json = JsonUtility.ToJson(data, prettyPrint: true);
+            File.WriteAllText(SavePath, json);
+            Debug.Log($"[SaveSystem] Partida guardada en: {SavePath}");
+        }
+        catch (Exception e)
+        {
+            Debug.LogError($"[SaveSystem] Error al guardar: {e.Message}");
+        }
     }
 
-    public static SaveData Load()
+    // ─── CARGAR ───────────────────────────────────────────────────────────
+    public static GameData Load()
     {
         if (!File.Exists(SavePath))
         {
-            Debug.Log("[SaveSystem] No existe guardado. Creando nuevo.");
-            return new SaveData();
+            Debug.Log("[SaveSystem] No existe partida. Creando nueva.");
+            return new GameData();
         }
-        string json = File.ReadAllText(SavePath);
-        SaveData data = JsonUtility.FromJson<SaveData>(json);
-        Debug.Log($"[SaveSystem] Cargado. Último guardado: {data.lastSaved}");
-        return data;
+        try
+        {
+            string json = File.ReadAllText(SavePath);
+            GameData data = JsonUtility.FromJson<GameData>(json);
+            Debug.Log($"[SaveSystem] Partida cargada. Guardada el: {data.lastSaved}");
+            return data;
+        }
+        catch (Exception e)
+        {
+            Debug.LogError($"[SaveSystem] Error al cargar: {e.Message}").
+            return new GameData();
+        }
     }
 
-    public static bool HasSave() => File.Exists(SavePath);
+    // ─── EXISTE PARTIDA ────────────────────────────────────────────────────
+    public static bool SaveExists() => File.Exists(SavePath);
 
+    // ─── BORRAR PARTIDA ────────────────────────────────────────────────────
     public static void DeleteSave()
     {
-        if (File.Exists(SavePath)) File.Delete(SavePath);
-        Debug.Log("[SaveSystem] Guardado eliminado.");
+        if (File.Exists(SavePath))
+        {
+            File.Delete(SavePath);
+            Debug.Log("[SaveSystem] Partida eliminada.");
+        }
     }
-}
-
-[System.Serializable]
-public class SaveData
-{
-    public string lastSaved = "";
-
-    // Progreso del jugador
-    public int totalXP = 0;
-    public int currentRankIndex = 0;
-    public int coins = 0;
-    public int fame = 0;
-    public int crystals = 0;
-
-    // Caravana
-    public int caravanLevel = 1;
-    public List<string> unlockedUpgrades = new List<string>();
-
-    // Zonas
-    public List<string> unlockedZones = new List<string>() { "pradera_de_bruma" };
-    public string currentZone = "pradera_de_bruma";
-
-    // Recetario
-    public List<string> discoveredRecipes = new List<string>();
-
-    // Bestiario
-    public List<string> capturedCreatures = new List<string>();
-
-    // Logros
-    public List<string> unlockedAchievements = new List<string>();
-
-    // Herramientas
-    public int netLevel = 1;
-    public int baitLevel = 1;
-    public int trapLevel = 1;
-    public int gloveLevel = 1;
-
-    // Estadísticas generales
-    public int totalDishesCooked = 0;
-    public int totalCreaturesCaptured = 0;
-    public int totalOrdersCompleted = 0;
-    public float totalPlayTimeSeconds = 0f;
 }
