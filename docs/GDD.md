@@ -1,5 +1,5 @@
 # 📋 Game Design Document — Caravan Kitchen
-**Versión:** 0.2 | **Motor:** Unity 2022.3 LTS | **Plataforma:** Android (Google Play)
+**Versión:** 0.3 | **Motor:** Unity 6.3 LTS | **Plataforma:** Android (Google Play)
 
 ---
 
@@ -69,8 +69,8 @@ Emociones objetivo por fase del loop:
 
 ## 4. Personajes
 
-### Kiri — Protagonista
-- Chef exploradora nómada
+### Kael — Protagonista
+- Chef explorador nómada
 - Sombrero de cocina con goggles
 - Mochila-caldero, bufanda larga
 - Red plegable, guantes y botas de campo
@@ -83,12 +83,62 @@ Emociones objetivo por fase del loop:
 - Cook (revolver caldero)
 - Celebrate, Tired
 
-### Fumi — Compañero
-- Nubecita pequeña con ojos expresivos
-- Brilla en azul al detectar criatura rara
-- Brilla en amarillo al detectar ingrediente especial
-- Reacciona con emojis flotantes al cocinar recetas nuevas
-- Guía tutoriales con flechas y burbujas
+---
+
+### 🦆 Pato — Compañero del Chef
+
+> **Cambio de diseño v0.3:** El compañero fue rediseñado de nube flotante → pato blanco regordete.
+> Script: `PatoController.cs` (NimbusController.cs es alias obsoleto).
+
+**Descripción visual:**
+- Pato blanco regordete con cuerpo ovalado y compacto
+- Ojitos negros brillantes y redondos, expresivos
+- Cachetes rosados siempre visibles (SpriteRenderer separado)
+- Pico naranja pequeño y rechoncho
+- Alitas cortas que aletean cuando está emocionado
+- Cola blanca que menea cuando está contento
+- Patitas naranjas cortas
+
+**Animaciones del Pato:**
+| Animación | Cuándo | Descripción |
+|---|---|---|
+| Waddle_Idle | Siempre (Neutral) | Balanceo suave lado a lado |
+| Waddle_Walk | Siguiendo al jugador | Waddle más rápido con bob vertical |
+| Flap_Excited | Emoción Excited | Alas agitan rápido, salta un poco |
+| Sit_Tired | Emoción Tired | Se sienta, ojos semicerrados |
+| Head_Tilt | Emoción Curious | Cabeza ladeada, ojitos grandes |
+| Spin_Happy | Emoción Happy | Giro rápido de 360° |
+| Puff_Approving | Emoción Approving | Se infla satisfecho |
+| Shiver_Alert | Emoción Alert | Tiembla levemente |
+
+**Sistema de color (tint sobre sprite blanco):**
+| Emoción | Tint | Cuándo |
+|---|---|---|
+| Neutral | Blanco puro | Estado base |
+| Curious | Azul cielo suave | Detecta criatura |
+| Happy | Amarillo suave | Receta nueva / hallazgo |
+| Excited | Naranja cálido | Criatura brillante |
+| Alert | Rojo suave | Peligro / rareza muy alta |
+| Mysterious | Lavanda | Zona nueva / secreto |
+| Approving | Verde menta | Receta completada con éxito |
+| Tired | Gris azulado | Energía baja |
+
+**Frases del Pato (personalidad):**
+- Habla siempre con algún "cuac" incorporado
+- Curioso: *"...cuac?"* / *"Algo hay aquí."*
+- Emocionado: *"¡¡CUAC CUAC CUAC!!"* / *"¡CRIATURA BRILLANTE!"*
+- Aprobando: *"Mmm... ¡cuac delicioso!"*
+- Cansado: *"...cuac..."* / *"Pato cansado."*
+- Misterioso: *"Cuac... mágico."* / *"Kael, cuidado."*
+- Afinidad 50: *"¡Ya confío en ti, cuac!"*
+- Afinidad máx: *"Eres el mejor chef. ¡CUAC!"*
+
+**Sistema de afinidad:**
+- 0–49: Pato tímido, menos frases
+- 50–74: Pato confiado, frases más largas
+- 75–100: Pato fiel, reacciones más exageradas y tiernas
+
+---
 
 ### NPCs de Mercado
 | NPC | Función |
@@ -127,10 +177,11 @@ Base de operaciones. Crece visualmente de nivel 1 a 5:
 
 ### Sistema de captura
 No es combate. Es observación + herramienta correcta:
-- Detectar criatura (Fumi brilla)
+- Detectar criatura (Pato reacciona con tint y frase)
 - Seleccionar herramienta adecuada
 - Colocar/lanzar en posición correcta
 - Animación de captura → ingresa inventario
+- El Pato celebra con Flap_Excited
 
 **Comportamientos de IA de criaturas:**
 - IDLE → deambula en zona
@@ -144,6 +195,7 @@ No es combate. Es observación + herramienta correcta:
 - Timer de cocción (30 seg – 3 min)
 - Calidad determinada por ingredientes usados
 - Resultado: platillo con nombre, ilustración, valor
+- El Pato hace Puff_Approving al terminar una receta nueva
 
 ### Sistema de pedidos
 - 3 pedidos activos simultáneos (más con mejoras)
