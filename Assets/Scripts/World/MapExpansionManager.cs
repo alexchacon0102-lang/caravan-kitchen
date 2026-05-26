@@ -1,252 +1,220 @@
+using UnityEngine;
 using System;
 using System.Collections.Generic;
-using UnityEngine;
 
 /// <summary>
-/// MapExpansionManager — Mapa de regiones desbloqueables
-/// Maneja el estado de cada región, condiciones de desbloqueo,
-/// recompensas de descubrimiento y tránsito entre zonas.
-/// Fase 4 — Caravan Kitchen
+/// MapExpansionManager — Controla el desbloqueo de regiones del mundo.
+/// Cada región tiene requisitos de monedas, fama, nivel y zonas previas.
 /// </summary>
+[System.Serializable]
+public class RegionData
+{
+    public string regionId;
+    public string displayName;
+    [TextArea] public string description;
+    public int requiredLevel;
+    public int requiredFame;
+    public int unlockCost;          // Monedas de Sabor
+    public string[] prerequisiteRegionIds;
+    public bool isUnlocked;
+    public bool isDiscovered;       // Visto pero no desbloqueado
+    public int difficulty;          // 1-5
+    public string[] exclusiveCreatures;
+    public string[] exclusiveRecipes;
+    public DayNightRequirement timeRestriction;
+
+    public enum DayNightRequirement { Any, DayOnly, NightOnly }
+}
+
 public class MapExpansionManager : MonoBehaviour
 {
     public static MapExpansionManager Instance { get; private set; }
 
-    // ─── Datos de Región ─────────────────────────────────
-    [Serializable]
-    public class RegionData
-    {
-        public string id;               // e.g. "pradera_bruma"
-        public string displayName;
-        [TextArea(2,4)]
-        public string description;
-        public string sceneToLoad;      // nombre de escena Unity
-        public Sprite mapIcon;
-        public Vector2 mapPosition;     // posición en el mapa UI
-
-        [Header("Desbloqueo")]
-        public bool  unlockedByDefault;
-        public int   requiredPlayerLevel;
-        public int   requiredFame;
-        public string requiredRegionId; // región previa necesaria
-        public int   travelEnergyCost;
-
-        [Header("Dificultad")]
-        [Range(1,5)] public int difficultyStars = 1;
-
-        [Header("Recompensa al descubrir")]
-        public int   discoveryXP    = 150;
-        public int   discoveryCoins = 100;
-        public string unlockRecipeId;   // receta especial desbloqueada al llegar
-
-        [Header("Estado runtime (no tocar)")]
-        public bool isUnlocked;
-        public bool isDiscovered;       // jugador ya entró al menos una vez
-        public int  timesVisited;
-    }
-
-    // ─── Inspector ────────────────────────────────────────
     [Header("Regiones del mundo")]
-    public List<RegionData> regions = new();
+    public List<RegionData> regions = new List<RegionData>();
 
-    [Header("Referencias")]
-    public XPManager      xpManager;
-    public CurrencyManager currencyManager;
-    public AudioManager   audioManager;
-
-    // ─── Eventos ─────────────────────────────────────────
+    [Header("Eventos")]
     public event Action<RegionData> OnRegionUnlocked;
     public event Action<RegionData> OnRegionDiscovered;
-    public event Action<RegionData> OnRegionEntered;
 
-    private RegionData _currentRegion;
-
-    // ─── Unity ────────────────────────────────────────────
+    // ─── DATOS DE REGIONES ───────────────────────────────────────────────────
     void Awake()
     {
         if (Instance != null && Instance != this) { Destroy(gameObject); return; }
         Instance = this;
+        InitializeRegions();
+        LoadProgress();
     }
 
-    void Start()
+    void InitializeRegions()
     {
-        InitializeDefaultRegions();
-        LoadRegionStates();
-        EvaluateUnlocks();
-    }
-
-    // ─── Inicialización ───────────────────────────────────
-    void InitializeDefaultRegions()
-    {
-        if (regions.Count > 0) return; // ya configuradas por inspector
-
         regions = new List<RegionData>
         {
-            new() { id="pradera_bruma",    displayName="Pradera de Bruma",
-                    description="Campo suave cubierto de niebla de amanecer. Zona inicial.",
-                    sceneToLoad="Zone_PraderaBruma",   mapPosition=new Vector2(0,0),
-                    unlockedByDefault=true,            difficultyStars=1,
-                    travelEnergyCost=10,               discoveryXP=0, discoveryCoins=0 },
-
-            new() { id="bosque_vapor",     displayName="Bosque de Vapor Dulce",
-                    description="Árboles de corteza carmesí sudan néctar.",
-                    sceneToLoad="Zone_BosqueVapor",    mapPosition=new Vector2(220, 80),
-                    requiredPlayerLevel=5,             requiredFame=100,
-                    requiredRegionId="pradera_bruma",  difficultyStars=2,
-                    travelEnergyCost=20,               discoveryXP=150, discoveryCoins=80,
-                    unlockRecipeId="te_vapor_dulce" },
-
-            new() { id="arrecife_nubes",   displayName="Arrecife de Nubes",
-                    description="Plataformas de coral blanco flotando sobre un mar de nubes.",
-                    sceneToLoad="Zone_ArrecifeNubes",  mapPosition=new Vector2(400, -40),
-                    requiredPlayerLevel=10,            requiredFame=300,
-                    requiredRegionId="bosque_vapor",   difficultyStars=3,
-                    travelEnergyCost=35,               discoveryXP=250, discoveryCoins=150,
-                    unlockRecipeId="ceviche_nubipez" },
-
-            new() { id="barranco_caldero", displayName="Barranco del Caldero",
-                    description="Paredes de roca volcánica. Temperatura sofocante.",
-                    sceneToLoad="Zone_BarrancoCaldero",mapPosition=new Vector2(320, -220),
-                    requiredPlayerLevel=16,            requiredFame=600,
-                    requiredRegionId="arrecife_nubes", difficultyStars=4,
-                    travelEnergyCost=50,               discoveryXP=400, discoveryCoins=250,
-                    unlockRecipeId="guiso_salamandra" },
-
-            new() { id="mercado_suspendido",displayName="Mercado Suspendido",
-                    description="Ciudad flotante. Hub de comercio avanzado.",
-                    sceneToLoad="Zone_MercadoSuspendido",mapPosition=new Vector2(500,120),
-                    requiredPlayerLevel=12,            requiredFame=800,
-                    requiredRegionId="arrecife_nubes", difficultyStars=2,
-                    travelEnergyCost=40,               discoveryXP=300, discoveryCoins=500,
-                    unlockRecipeId="platillo_mercado" },
-
-            new() { id="jungla_canela",    displayName="Jungla de Canela Viva",
-                    description="Los árboles huelen a especias. La lluvia sabe a vainilla.",
-                    sceneToLoad="Zone_JunglaCanela",   mapPosition=new Vector2(600, 60),
-                    requiredPlayerLevel=22,            requiredFame=1200,
-                    requiredRegionId="mercado_suspendido",difficultyStars=4,
-                    travelEnergyCost=60,               discoveryXP=500, discoveryCoins=350,
-                    unlockRecipeId="te_canela_viva" },
-
-            new() { id="mareas_eternas",   displayName="Las Mareas Eternas",
-                    description="El mar sube y baja en ciclos de 10 min.",
-                    sceneToLoad="Zone_MareaEterna",    mapPosition=new Vector2(700,-150),
-                    requiredPlayerLevel=28,            requiredFame=2000,
-                    requiredRegionId="jungla_canela",  difficultyStars=5,
-                    travelEnergyCost=80,               discoveryXP=700, discoveryCoins=600,
-                    unlockRecipeId="sopa_mareas" },
-
-            new() { id="cumbre_gran_velo", displayName="Cumbre del Gran Velo",
-                    description="Aquí comenzó todo. La receta maestra espera.",
-                    sceneToLoad="Zone_CumbreGranVelo", mapPosition=new Vector2(850,-80),
-                    requiredPlayerLevel=35,            requiredFame=5000,
-                    requiredRegionId="mareas_eternas", difficultyStars=5,
-                    travelEnergyCost=100,              discoveryXP=2000, discoveryCoins=2000,
-                    unlockRecipeId="receta_maestra" }
+            new RegionData
+            {
+                regionId = "pradera_bruma", displayName = "Pradera de Bruma",
+                description = "El primer paso fuera de Isla Umbral. Niebla suave, criaturas tranquilas.",
+                requiredLevel = 1, requiredFame = 0, unlockCost = 0,
+                prerequisiteRegionIds = new string[0],
+                isUnlocked = true, isDiscovered = true, difficulty = 1,
+                exclusiveCreatures = new[]{ "puffshroom", "mielin", "caracol_canela" },
+                exclusiveRecipes   = new[]{ "sopa_brumosa", "te_de_miel", "tostada_basica" }
+            },
+            new RegionData
+            {
+                regionId = "bosque_vapor", displayName = "Bosque de Vapor Dulce",
+                description = "Árboles carmesí que sudan néctar. Insectos musicales y especias ardientes.",
+                requiredLevel = 4, requiredFame = 100, unlockCost = 500,
+                prerequisiteRegionIds = new[]{ "pradera_bruma" },
+                isUnlocked = false, isDiscovered = false, difficulty = 2,
+                exclusiveCreatures = new[]{ "abejarin", "mariposa_miel", "lagartico_carmesi" },
+                exclusiveRecipes   = new[]{ "néctar_tibio", "infusion_carmesi", "jalea_de_abejas" }
+            },
+            new RegionData
+            {
+                regionId = "arrecife_nubes", displayName = "Arrecife de Nubes",
+                description = "Coral blanco flotante. Los peces nadan entre nubes como si el cielo fuera mar.",
+                requiredLevel = 8, requiredFame = 300, unlockCost = 1200,
+                prerequisiteRegionIds = new[]{ "bosque_vapor" },
+                isUnlocked = false, isDiscovered = false, difficulty = 3,
+                exclusiveCreatures = new[]{ "nubipez", "esponjacoral", "calamar_celeste" },
+                exclusiveRecipes   = new[]{ "ceviche_de_nube", "sopa_celeste", "sal_de_nube_curada" },
+                timeRestriction = RegionData.DayNightRequirement.DayOnly
+            },
+            new RegionData
+            {
+                regionId = "barranco_caldero", displayName = "Barranco del Caldero",
+                description = "Roca volcánica y caldos minerales. Caliente. El aroma es imposible de describir.",
+                requiredLevel = 14, requiredFame = 700, unlockCost = 2500,
+                prerequisiteRegionIds = new[]{ "arrecife_nubes" },
+                isUnlocked = false, isDiscovered = false, difficulty = 4,
+                exclusiveCreatures = new[]{ "salamandra_azafran", "escorpion_pimienta", "larva_cobre" },
+                exclusiveRecipes   = new[]{ "guiso_volcanico", "pan_de_roca", "esencia_mineral" }
+            },
+            new RegionData
+            {
+                regionId = "mercado_suspendido", displayName = "Mercado Suspendido",
+                description = "Ciudad flotante sobre redes. Comerciantes de todas las regiones. Concursos culinarios.",
+                requiredLevel = 10, requiredFame = 800, unlockCost = 0,
+                prerequisiteRegionIds = new[]{ "bosque_vapor" },
+                isUnlocked = false, isDiscovered = false, difficulty = 1,
+                exclusiveCreatures = new string[0],
+                exclusiveRecipes   = new[]{ "receta_legendaria_mercado" }
+            },
+            new RegionData
+            {
+                regionId = "jungla_canela", displayName = "Jungla de Canela Viva",
+                description = "Lluvia de vainilla. Árboles que huelen a especias. Flora que canta.",
+                requiredLevel = 18, requiredFame = 1200, unlockCost = 4000,
+                prerequisiteRegionIds = new[]{ "barranco_caldero", "mercado_suspendido" },
+                isUnlocked = false, isDiscovered = false, difficulty = 4,
+                exclusiveCreatures = new[]{ "serpiente_canela", "tucan_cardamomo", "rana_vainilla" },
+                exclusiveRecipes   = new[]{ "curry_de_jungla", "pastel_de_canela_viva", "extracto_aromatico" }
+            },
+            new RegionData
+            {
+                regionId = "mareas_eternas", displayName = "Las Mareas Eternas",
+                description = "El mar sube y baja cada 10 minutos revelando zonas únicas. Criaturas abisales.",
+                requiredLevel = 24, requiredFame = 2000, unlockCost = 6000,
+                prerequisiteRegionIds = new[]{ "jungla_canela" },
+                isUnlocked = false, isDiscovered = false, difficulty = 5,
+                exclusiveCreatures = new[]{ "pulpo_tormenta", "medusa_luz", "cangrejo_runa" },
+                exclusiveRecipes   = new[]{ "sopa_abisal", "perla_de_caldo", "marinado_de_marea" },
+                timeRestriction = RegionData.DayNightRequirement.NightOnly
+            },
+            new RegionData
+            {
+                regionId = "cumbre_velo", displayName = "Cumbre del Gran Velo",
+                description = "El origen de todo. La receta maestra está aquí. La bruma puede terminar.",
+                requiredLevel = 30, requiredFame = 5000, unlockCost = 0,
+                prerequisiteRegionIds = new[]{ "mareas_eternas" },
+                isUnlocked = false, isDiscovered = false, difficulty = 5,
+                exclusiveCreatures = new string[0],
+                exclusiveRecipes   = new[]{ "receta_maestra" }
+            }
         };
     }
 
-    // ─── Evaluación de desbloqueos ────────────────────────
-    public void EvaluateUnlocks()
+    // ─── LÓGICA DE DESBLOQUEO ────────────────────────────────────────────────
+    public bool CanUnlock(string regionId)
     {
-        int playerLevel = xpManager != null ? xpManager.CurrentLevel : 1;
-        int fame        = currencyManager != null ? currencyManager.GetFame() : 0;
+        RegionData r = GetRegion(regionId);
+        if (r == null || r.isUnlocked) return false;
 
-        foreach (var r in regions)
+        int playerLevel = XPManager.Instance ? XPManager.Instance.currentLevel : 1;
+        int playerFame  = CurrencyManager.Instance ? CurrencyManager.Instance.Fame : 0;
+        int playerGold  = CurrencyManager.Instance ? CurrencyManager.Instance.Coins : 0;
+
+        if (playerLevel < r.requiredLevel) return false;
+        if (playerFame  < r.requiredFame)  return false;
+        if (playerGold  < r.unlockCost)    return false;
+
+        foreach (string prereq in r.prerequisiteRegionIds)
         {
-            if (r.isUnlocked) continue;
-            if (r.unlockedByDefault) { r.isUnlocked = true; continue; }
-
-            bool levelOK  = playerLevel >= r.requiredPlayerLevel;
-            bool fameOK   = fame        >= r.requiredFame;
-            bool regionOK = string.IsNullOrEmpty(r.requiredRegionId)
-                            || IsDiscovered(r.requiredRegionId);
-
-            if (levelOK && fameOK && regionOK)
-            {
-                r.isUnlocked = true;
-                OnRegionUnlocked?.Invoke(r);
-                Debug.Log($"[MapExpansion] Región desbloqueada: {r.displayName}");
-            }
+            RegionData pre = GetRegion(prereq);
+            if (pre == null || !pre.isUnlocked) return false;
         }
-    }
-
-    // ─── Viaje ────────────────────────────────────────────
-    public bool CanTravelTo(string regionId)
-    {
-        var r = GetRegion(regionId);
-        if (r == null || !r.isUnlocked) return false;
-        // Aquí se validaría energía (PlayerController o similar)
         return true;
     }
 
-    public void TravelTo(string regionId)
+    public bool TryUnlockRegion(string regionId)
     {
-        var r = GetRegion(regionId);
-        if (r == null || !r.isUnlocked)
-        {
-            Debug.LogWarning($"[MapExpansion] Región no disponible: {regionId}");
-            return;
-        }
+        if (!CanUnlock(regionId)) return false;
+        RegionData r = GetRegion(regionId);
+        if (r.unlockCost > 0)
+            CurrencyManager.Instance?.SpendCoins(r.unlockCost);
+        r.isUnlocked = true;
+        r.isDiscovered = true;
+        OnRegionUnlocked?.Invoke(r);
+        NimbusController.Instance?.OnNewZone();
+        SaveProgress();
+        GameManager.Instance?.AchievementManager?.UnlockAchievement("region_" + regionId);
+        return true;
+    }
 
-        bool firstVisit = !r.isDiscovered;
-        r.isDiscovered  = true;
-        r.timesVisited++;
-        _currentRegion  = r;
-
-        if (firstVisit)
+    public void DiscoverRegion(string regionId)
+    {
+        RegionData r = GetRegion(regionId);
+        if (r != null && !r.isDiscovered)
         {
+            r.isDiscovered = true;
             OnRegionDiscovered?.Invoke(r);
-            if (xpManager       != null) xpManager.AddXP(r.discoveryXP);
-            if (currencyManager != null) currencyManager.AddCoins(r.discoveryCoins);
-            Debug.Log($"[MapExpansion] Primera visita a: {r.displayName} — XP+{r.discoveryXP}");
+            SaveProgress();
         }
-
-        OnRegionEntered?.Invoke(r);
-        SaveRegionStates();
-
-        // Cargar escena
-        if (!string.IsNullOrEmpty(r.sceneToLoad))
-            UnityEngine.SceneManagement.SceneManager.LoadScene(r.sceneToLoad);
     }
 
-    // ─── Utilidades ───────────────────────────────────────
-    public RegionData GetRegion(string id)
-        => regions.Find(r => r.id == id);
-
-    public bool IsDiscovered(string id)
+    public RegionData GetRegion(string id) => regions.Find(r => r.regionId == id);
+    public List<RegionData> GetUnlockedRegions() => regions.FindAll(r => r.isUnlocked);
+    public List<RegionData> GetAvailableRegions()
     {
-        var r = GetRegion(id);
-        return r != null && r.isDiscovered;
+        // Disponibles = desbloqueadas + las que cumplen prereqs pero no costo
+        return regions.FindAll(r => r.isUnlocked || HasPrereqsMet(r));
     }
 
-    public RegionData GetCurrentRegion() => _currentRegion;
+    bool HasPrereqsMet(RegionData r)
+    {
+        foreach (string p in r.prerequisiteRegionIds)
+        { if (!(GetRegion(p)?.isUnlocked ?? false)) return false; }
+        return true;
+    }
 
-    public List<RegionData> GetUnlockedRegions()
-        => regions.FindAll(r => r.isUnlocked);
-
-    public List<RegionData> GetLockedRegions()
-        => regions.FindAll(r => !r.isUnlocked);
-
-    // ─── Persistencia ─────────────────────────────────────
-    void SaveRegionStates()
+    // ─── PERSISTENCIA ────────────────────────────────────────────────────────
+    void SaveProgress()
     {
         for (int i = 0; i < regions.Count; i++)
         {
-            PlayerPrefs.SetInt($"region_{regions[i].id}_unlocked",   regions[i].isUnlocked  ? 1 : 0);
-            PlayerPrefs.SetInt($"region_{regions[i].id}_discovered", regions[i].isDiscovered? 1 : 0);
-            PlayerPrefs.SetInt($"region_{regions[i].id}_visits",     regions[i].timesVisited);
+            PlayerPrefs.SetInt("Region_" + regions[i].regionId + "_unlocked", regions[i].isUnlocked ? 1 : 0);
+            PlayerPrefs.SetInt("Region_" + regions[i].regionId + "_discovered", regions[i].isDiscovered ? 1 : 0);
         }
         PlayerPrefs.Save();
     }
 
-    void LoadRegionStates()
+    void LoadProgress()
     {
         foreach (var r in regions)
         {
-            r.isUnlocked   = PlayerPrefs.GetInt($"region_{r.id}_unlocked",   r.unlockedByDefault ? 1 : 0) == 1;
-            r.isDiscovered = PlayerPrefs.GetInt($"region_{r.id}_discovered", 0) == 1;
-            r.timesVisited = PlayerPrefs.GetInt($"region_{r.id}_visits",     0);
+            r.isUnlocked   = PlayerPrefs.GetInt("Region_" + r.regionId + "_unlocked",   r.isUnlocked ? 1 : 0) == 1;
+            r.isDiscovered = PlayerPrefs.GetInt("Region_" + r.regionId + "_discovered", r.isDiscovered ? 1 : 0) == 1;
         }
     }
 }

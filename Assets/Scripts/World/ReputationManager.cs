@@ -1,181 +1,121 @@
+using UnityEngine;
 using System;
 using System.Collections.Generic;
-using UnityEngine;
 
 /// <summary>
-/// ReputationManager — Sistema de reputación por región
-/// Afecta precios, comportamiento de criaturas, diálogos de NPCs
-/// y desbloqueo de contenido exclusivo.
-/// Fase 4 — Caravan Kitchen
+/// ReputationManager — Reputación por región que afecta precios, criaturas disponibles
+/// y diálogos de NPCs. Cada región tiene su propia barra (0-1000).
 /// </summary>
+[System.Serializable]
+public class RegionReputation
+{
+    public string regionId;
+    public string displayName;
+    public float value;           // 0 – 1000
+    public ReputationTier tier;
+
+    public enum ReputationTier
+    {
+        Desconocido = 0,   // 0–99
+        Conocido    = 1,   // 100–299
+        Respetado   = 2,   // 300–599
+        Admirado    = 3,   // 600–899
+        Legendario  = 4    // 900–1000
+    }
+
+    public ReputationTier CalculateTier()
+    {
+        if (value < 100)  return ReputationTier.Desconocido;
+        if (value < 300)  return ReputationTier.Conocido;
+        if (value < 600)  return ReputationTier.Respetado;
+        if (value < 900)  return ReputationTier.Admirado;
+        return ReputationTier.Legendario;
+    }
+
+    // Multiplicador de precio de venta basado en reputación (0.8x – 1.5x)
+    public float SellPriceMultiplier => 0.8f + (value / 1000f) * 0.7f;
+
+    // Criaturas raras aparecen más seguido con mejor reputación
+    public float RarityBonus => (value / 1000f) * 0.15f;  // hasta +15% rareza
+}
+
 public class ReputationManager : MonoBehaviour
 {
     public static ReputationManager Instance { get; private set; }
 
-    // ─── Niveles de reputación ────────────────────────────
-    public enum RepLevel { Desconocido = 0, Conocido = 1, Apreciado = 2, Respetado = 3, Legendario = 4 }
+    public List<RegionReputation> reputations = new List<RegionReputation>();
+    public event Action<RegionReputation, ReputationReputation.ReputationTier> OnTierUp;
 
-    [Serializable]
-    public class RegionReputation
-    {
-        public string regionId;
-        public string regionName;
-        public int    points;           // 0 – 1000
-        public RepLevel level;          // calculado automáticamente
-
-        // Efecto en economía (calculado por nivel)
-        public float  priceModifier    => level switch   // precio de venta
-        {
-            RepLevel.Conocido   => 1.05f,
-            RepLevel.Apreciado  => 1.12f,
-            RepLevel.Respetado  => 1.22f,
-            RepLevel.Legendario => 1.40f,
-            _                   => 1.00f
-        };
-        public float  buyModifier      => level switch   // precio de compra
-        {
-            RepLevel.Conocido   => 0.97f,
-            RepLevel.Apreciado  => 0.92f,
-            RepLevel.Respetado  => 0.85f,
-            RepLevel.Legendario => 0.75f,
-            _                   => 1.00f
-        };
-        // Rareza de criaturas
-        public float  rarityBonus      => level switch
-        {
-            RepLevel.Apreciado  => 0.05f,
-            RepLevel.Respetado  => 0.10f,
-            RepLevel.Legendario => 0.18f,
-            _                   => 0f
-        };
-    }
-
-    // ─── Inspector ────────────────────────────────────────
-    [Header("Reputaciones")]
-    public List<RegionReputation> reputations = new();
-
-    [Header("Thresholds (puntos para cada nivel)")]
-    public int thresholdKnown     = 100;
-    public int thresholdAppreciated = 300;
-    public int thresholdRespected   = 600;
-    public int thresholdLegendary   = 1000;
-
-    // ─── Eventos ─────────────────────────────────────────
-    public event Action<string, RepLevel> OnRepLevelUp;
-    public event Action<string, int>      OnRepGained;
-
-    // ─── Unity ────────────────────────────────────────────
+    // ─── INICIALIZACIÓN ───────────────────────────────────────────────────────
     void Awake()
     {
         if (Instance != null && Instance != this) { Destroy(gameObject); return; }
         Instance = this;
-    }
-
-    void Start()
-    {
-        InitializeRegions();
+        InitReputations();
         LoadAll();
     }
 
-    void InitializeRegions()
+    void InitReputations()
     {
-        if (reputations.Count > 0) return;
-        var ids = new[]
-        {
-            ("pradera_bruma",     "Pradera de Bruma"),
-            ("bosque_vapor",      "Bosque de Vapor Dulce"),
-            ("arrecife_nubes",    "Arrecife de Nubes"),
-            ("barranco_caldero",  "Barranco del Caldero"),
-            ("mercado_suspendido","Mercado Suspendido"),
-            ("jungla_canela",     "Jungla de Canela Viva"),
-            ("mareas_eternas",    "Las Mareas Eternas"),
-            ("cumbre_gran_velo",  "Cumbre del Gran Velo")
-        };
-        foreach (var (id, name) in ids)
-            reputations.Add(new RegionReputation { regionId = id, regionName = name });
+        string[] ids   = { "pradera_bruma","bosque_vapor","arrecife_nubes","barranco_caldero","mercado_suspendido","jungla_canela","mareas_eternas","cumbre_velo" };
+        string[] names = { "Pradera de Bruma","Bosque de Vapor","Arrecife de Nubes","Barranco del Caldero","Mercado Suspendido","Jungla de Canela","Mareas Eternas","Cumbre del Velo" };
+        reputations.Clear();
+        for (int i = 0; i < ids.Length; i++)
+            reputations.Add(new RegionReputation { regionId = ids[i], displayName = names[i], value = 0 });
     }
 
-    // ─── API pública ──────────────────────────────────────
-    public void AddReputation(string regionId, int amount)
+    // ─── MODIFICAR REPUTACIÓN ─────────────────────────────────────────────────
+    /// <summary>Sumar reputación en una región. Fuente: entregar pedido, platillo legendario, misión.</summary>
+    public void AddReputation(string regionId, float amount)
     {
-        var rep = GetRep(regionId);
+        RegionReputation rep = GetReputation(regionId);
         if (rep == null) return;
-
-        rep.points = Mathf.Clamp(rep.points + amount, 0, 1000);
-        RepLevel newLevel = CalculateLevel(rep.points);
-
-        if (newLevel > rep.level)
+        var prevTier = rep.CalculateTier();
+        rep.value = Mathf.Clamp(rep.value + amount, 0, 1000);
+        rep.tier  = rep.CalculateTier();
+        if (rep.tier > prevTier)
         {
-            rep.level = newLevel;
-            OnRepLevelUp?.Invoke(regionId, newLevel);
-            Debug.Log($"[Reputation] {rep.regionName} subió a {newLevel}");
+            OnTierUp?.Invoke(rep, rep.tier);
+            HandleTierUpReward(rep);
         }
-
-        OnRepGained?.Invoke(regionId, amount);
         SaveAll();
     }
 
-    public RepLevel GetLevel(string regionId)
-        => GetRep(regionId)?.level ?? RepLevel.Desconocido;
+    void HandleTierUpReward(RegionReputation rep)
+    {
+        // Dar monedas y fama al subir tier
+        int[] coinRewards = { 0, 200, 500, 1000, 2500 };
+        int[] fameRewards = { 0,  50,  150,  300,  750 };
+        int tier = (int)rep.tier;
+        CurrencyManager.Instance?.AddCoins(coinRewards[tier]);
+        CurrencyManager.Instance?.AddFame(fameRewards[tier]);
+        // Logro si llega a Legendario
+        if (rep.tier == RegionReputation.ReputationTier.Legendario)
+            GameManager.Instance?.AchievementManager?.UnlockAchievement("rep_legend_" + rep.regionId);
+    }
 
+    // ─── GETTERS ─────────────────────────────────────────────────────────────
+    public RegionReputation GetReputation(string regionId) => reputations.Find(r => r.regionId == regionId);
+
+    /// <summary>Multiplicador de precio de venta para una región específica.</summary>
     public float GetSellMultiplier(string regionId)
-        => GetRep(regionId)?.priceModifier ?? 1f;
+    {
+        var r = GetReputation(regionId);
+        return r != null ? r.SellPriceMultiplier : 0.8f;
+    }
 
-    public float GetBuyMultiplier(string regionId)
-        => GetRep(regionId)?.buyModifier ?? 1f;
-
+    /// <summary>Bonus de rareza activo en la región actual.</summary>
     public float GetRarityBonus(string regionId)
-        => GetRep(regionId)?.rarityBonus ?? 0f;
-
-    public int GetPoints(string regionId)
-        => GetRep(regionId)?.points ?? 0;
-
-    public int GetPointsToNextLevel(string regionId)
     {
-        var rep = GetRep(regionId);
-        if (rep == null) return 0;
-        return rep.level switch
-        {
-            RepLevel.Desconocido => thresholdKnown      - rep.points,
-            RepLevel.Conocido    => thresholdAppreciated - rep.points,
-            RepLevel.Apreciado   => thresholdRespected   - rep.points,
-            RepLevel.Respetado   => thresholdLegendary   - rep.points,
-            _                    => 0
-        };
+        var r = GetReputation(regionId);
+        return r != null ? r.RarityBonus : 0f;
     }
 
-    /// <summary>Reputación ganada al entregar un pedido de esta región.</summary>
-    public void OnOrderDelivered(string regionId, bool isSpecialOrder)
-    {
-        int gain = isSpecialOrder ? 25 : 10;
-        AddReputation(regionId, gain);
-    }
-
-    /// <summary>Reputación ganada al descubrir la receta legendaria de la región.</summary>
-    public void OnLegendaryRecipeDelivered(string regionId)
-        => AddReputation(regionId, 100);
-
-    // ─── Privados ─────────────────────────────────────────
-    RegionReputation GetRep(string id)
-        => reputations.Find(r => r.regionId == id);
-
-    RepLevel CalculateLevel(int pts)
-    {
-        if (pts >= thresholdLegendary)  return RepLevel.Legendario;
-        if (pts >= thresholdRespected)  return RepLevel.Respetado;
-        if (pts >= thresholdAppreciated)return RepLevel.Apreciado;
-        if (pts >= thresholdKnown)      return RepLevel.Conocido;
-        return RepLevel.Desconocido;
-    }
-
-    // ─── Persistencia ─────────────────────────────────────
+    // ─── PERSISTENCIA ────────────────────────────────────────────────────────
     void SaveAll()
     {
         foreach (var r in reputations)
-        {
-            PlayerPrefs.SetInt($"rep_{r.regionId}_pts",   r.points);
-            PlayerPrefs.SetInt($"rep_{r.regionId}_level", (int)r.level);
-        }
+            PlayerPrefs.SetFloat("Rep_" + r.regionId, r.value);
         PlayerPrefs.Save();
     }
 
@@ -183,8 +123,12 @@ public class ReputationManager : MonoBehaviour
     {
         foreach (var r in reputations)
         {
-            r.points = PlayerPrefs.GetInt($"rep_{r.regionId}_pts",   0);
-            r.level  = (RepLevel)PlayerPrefs.GetInt($"rep_{r.regionId}_level", 0);
+            r.value = PlayerPrefs.GetFloat("Rep_" + r.regionId, 0f);
+            r.tier  = r.CalculateTier();
         }
     }
+
+    // ─── DEBUG ────────────────────────────────────────────────────────────────
+    [ContextMenu("Debug — Max All Reputations")]
+    void DebugMaxAll() { foreach (var r in reputations) AddReputation(r.regionId, 1000); }
 }
