@@ -1,7 +1,7 @@
 // ============================================================
 // CARAVAN KITCHEN — TutorialManager.cs
 // Script #33 — Fase 4
-// Tutorial guiado por Nimbus en pasos secuenciales.
+// Tutorial guiado por el Pato en pasos secuenciales.
 // No interrumpe el gameplay: usa overlays suaves y flechas.
 // Compatible con Unity 6.3 LTS
 // ============================================================
@@ -25,7 +25,7 @@ namespace CaravanKitchen.Core
             public string  title;
             [TextArea]
             public string  message;
-            public string  nimbusPhrase;       // Frase de Nimbus al mostrar este paso
+            public string  patoPhrase;         // Frase del Pato al mostrar este paso
             public string  highlightObjectTag; // Tag del objeto a resaltar (opcional)
             public bool    waitForAction;      // Si true, espera que el jugador haga algo
             public string  actionEventID;      // ID del evento que completa el paso
@@ -37,24 +37,23 @@ namespace CaravanKitchen.Core
         [SerializeField] private List<TutorialStep> steps = new List<TutorialStep>();
 
         [Header("UI del Tutorial")]
-        [SerializeField] private GameObject  tutorialPanel;
+        [SerializeField] private GameObject      tutorialPanel;
         [SerializeField] private TextMeshProUGUI titleText;
         [SerializeField] private TextMeshProUGUI messageText;
-        [SerializeField] private Button      nextButton;
-        [SerializeField] private Button      skipButton;
-        [SerializeField] private GameObject  highlightArrow;
+        [SerializeField] private Button          nextButton;
+        [SerializeField] private Button          skipButton;
+        [SerializeField] private GameObject      highlightArrow;
 
         [Header("Overlay")]
         [SerializeField] private CanvasGroup overlayCanvasGroup;
         [SerializeField] private float       overlayAlpha = 0.55f;
 
         // ─── ESTADO ──────────────────────────────────────────────────────
-        private int  _currentStepIndex = -1;
-        private bool _tutorialActive   = false;
+        private int  _currentStepIndex  = -1;
+        private bool _tutorialActive    = false;
         private bool _tutorialCompleted = false;
 
         // ─── EVENTS ──────────────────────────────────────────────────────
-        // Otros sistemas llaman a NotifyAction(actionID) para avanzar pasos
         public static System.Action<string> OnActionNotified;
 
         // ─── UNITY ───────────────────────────────────────────────────────
@@ -74,7 +73,6 @@ namespace CaravanKitchen.Core
 
         private void Start()
         {
-            // Cargar estado guardado
             if (SaveSystem.Instance != null)
                 _tutorialCompleted = SaveSystem.Instance.GetTutorialCompleted();
 
@@ -82,7 +80,7 @@ namespace CaravanKitchen.Core
                 StartCoroutine(StartTutorialDelayed(1.5f));
         }
 
-        // ─── INICIAR ──────────────────────────────────────────────────────
+        // ─── INICIAR ─────────────────────────────────────────────────────
         private IEnumerator StartTutorialDelayed(float delay)
         {
             yield return new WaitForSeconds(delay);
@@ -92,22 +90,20 @@ namespace CaravanKitchen.Core
         public void StartTutorial()
         {
             if (_tutorialCompleted) return;
-            _tutorialActive    = true;
-            _currentStepIndex  = -1;
+            _tutorialActive   = true;
+            _currentStepIndex = -1;
             NextStep();
         }
 
-        // ─── AVANZAR PASO ─────────────────────────────────────────────────
+        // ─── AVANZAR ─────────────────────────────────────────────────────
         public void NextStep()
         {
             _currentStepIndex++;
-
             if (_currentStepIndex >= steps.Count)
             {
                 CompleteTutorial();
                 return;
             }
-
             ShowStep(steps[_currentStepIndex]);
         }
 
@@ -118,18 +114,16 @@ namespace CaravanKitchen.Core
             if (titleText)   titleText.text   = step.title;
             if (messageText) messageText.text = step.message;
 
-            // Overlay suave
             if (overlayCanvasGroup)
                 StartCoroutine(FadeOverlay(0f, overlayAlpha, 0.4f));
 
-            // Nimbus dice su frase
-            if (!string.IsNullOrEmpty(step.nimbusPhrase))
-                CaravanKitchen.Companion.NimbusController.Instance?.SayPhrase(step.nimbusPhrase);
+            // El Pato dice su frase (usa patoPhrase, con fallback a nimbusPhrase para compatibilidad)
+            var pato = CaravanKitchen.Companion.PatoController.Instance;
+            if (pato != null && !string.IsNullOrEmpty(step.patoPhrase))
+                pato.SayPhrase(step.patoPhrase);
 
-            // Ocultar botón Next si el paso espera acción del jugador
             if (nextButton) nextButton.gameObject.SetActive(!step.waitForAction);
 
-            // Flecha de highlight
             if (highlightArrow)
             {
                 bool hasTarget = !string.IsNullOrEmpty(step.highlightObjectTag);
@@ -137,12 +131,13 @@ namespace CaravanKitchen.Core
                 if (hasTarget)
                 {
                     var target = GameObject.FindGameObjectWithTag(step.highlightObjectTag);
-                    if (target) highlightArrow.transform.position = target.transform.position + Vector3.up * 1.2f;
+                    if (target)
+                        highlightArrow.transform.position = target.transform.position + Vector3.up * 1.2f;
                 }
             }
         }
 
-        // ─── COMPLETAR PASO POR ACCIÓN ────────────────────────────────────
+        // ─── ACCIÓN DEL JUGADOR ───────────────────────────────────────────
         private void HandleActionNotified(string actionID)
         {
             if (!_tutorialActive || _currentStepIndex < 0 || _currentStepIndex >= steps.Count) return;
@@ -176,9 +171,10 @@ namespace CaravanKitchen.Core
             if (overlayCanvasGroup)
                 StartCoroutine(FadeOverlay(overlayAlpha, 0f, 0.4f));
             SaveSystem.Instance?.SetTutorialCompleted(true);
-            CaravanKitchen.Companion.NimbusController.Instance
-                ?.SayPhrase("¡Ya sabes todo lo que necesitas, Kael!");
-            Debug.Log("[Tutorial] ✅ Tutorial completado.");
+
+            var pato = CaravanKitchen.Companion.PatoController.Instance;
+            string nombre = pato != null ? pato.PatoName : "Pato";
+            pato?.SayPhrase($"¡Ya sabes todo, Kael! {nombre} estará contigo. ¡Cuac!");
         }
 
         // ─── FADE OVERLAY ────────────────────────────────────────────────
@@ -188,19 +184,15 @@ namespace CaravanKitchen.Core
             while (t < duration)
             {
                 t += Time.deltaTime;
-                if (overlayCanvasGroup) overlayCanvasGroup.alpha = Mathf.Lerp(from, to, t / duration);
+                if (overlayCanvasGroup)
+                    overlayCanvasGroup.alpha = Mathf.Lerp(from, to, t / duration);
                 yield return null;
             }
             if (overlayCanvasGroup) overlayCanvasGroup.alpha = to;
         }
 
         // ─── API PÚBLICA ─────────────────────────────────────────────────
-        /// <summary>
-        /// Otros sistemas llaman a esto para notificar que el jugador completó una acción.
-        /// Ejemplo: PlayerInventory.cs llama TutorialManager.NotifyAction("first_collect");
-        /// </summary>
         public static void NotifyAction(string actionID) => OnActionNotified?.Invoke(actionID);
-
         public bool IsTutorialActive => _tutorialActive;
     }
 }
